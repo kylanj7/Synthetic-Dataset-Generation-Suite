@@ -12,3 +12,5 @@ data/*.json
 data/*.jsonl
 !data/.gitkeep
 *.jsonl
+node_modules/
+sdgs_web.db
