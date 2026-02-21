@@ -47,15 +47,15 @@ def get_job_queue(dataset_id: int) -> queue.Queue | None:
         return _job_queues.get(dataset_id)
 
 
-def submit_job(dataset_id: int, run_fn, **kwargs):
+def submit_job(ds_id: int, run_fn, **kwargs):
     """Submit a dataset pipeline for background execution."""
     q = queue.Queue()
     with _lock:
-        _job_queues[dataset_id] = q
+        _job_queues[ds_id] = q
 
-    future = _executor.submit(_run_job, dataset_id, q, run_fn, kwargs)
+    future = _executor.submit(_run_job, ds_id, q, run_fn, kwargs)
     with _lock:
-        _job_futures[dataset_id] = future
+        _job_futures[ds_id] = future
     return future
 
 

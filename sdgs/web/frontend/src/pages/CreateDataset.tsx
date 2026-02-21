@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, CheckCircle, XCircle } from 'lucide-react'
-import { getProviders, ProviderInfo } from '../api/client'
+import { ChevronDown, ChevronRight, CheckCircle, XCircle, StopCircle } from 'lucide-react'
+import { getProviders, cancelDataset, ProviderInfo } from '../api/client'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
 
@@ -243,11 +243,30 @@ export default function CreateDataset() {
             marginBottom: '12px',
           }}>
             <h3 style={{ fontSize: '14px', fontWeight: 500 }}>Progress</h3>
-            {status && (
-              <span className={`badge badge-${status}`}>
-                {status}
-              </span>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {status && (
+                <span className={`badge badge-${status}`}>
+                  {status}
+                </span>
+              )}
+              {generating && !done && (
+                <button
+                  className="btn btn-danger"
+                  style={{ padding: '4px 10px', fontSize: '12px' }}
+                  onClick={async () => {
+                    if (datasetId) {
+                      try {
+                        await cancelDataset(datasetId)
+                        setGenerating(false)
+                      } catch { /* ignore */ }
+                    }
+                  }}
+                >
+                  <StopCircle size={14} />
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
           <div className="log-viewer" ref={logViewerRef} style={{ maxHeight: '300px' }}>
             {logs.map((line, i) => (

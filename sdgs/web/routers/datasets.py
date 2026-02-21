@@ -82,9 +82,7 @@ def create_dataset(
     api_key = _resolve_api_key(req.provider, current_user, db)
 
     # Submit pipeline to background executor
-    submit_job(
-        ds.id,
-        run_dataset_pipeline,
+    pipeline_kwargs = dict(
         dataset_id=ds.id,
         topic=req.topic,
         provider=req.provider,
@@ -94,6 +92,7 @@ def create_dataset(
         system_prompt=req.system_prompt,
         temperature=req.temperature,
     )
+    submit_job(ds.id, run_dataset_pipeline, **pipeline_kwargs)
 
     return DatasetResponse.model_validate(ds)
 

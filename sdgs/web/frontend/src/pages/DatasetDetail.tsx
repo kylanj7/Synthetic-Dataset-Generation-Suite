@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Search, Upload } from 'lucide-react'
+import { Search, Upload, StopCircle } from 'lucide-react'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
-import { getDataset } from '../api/client'
+import { getDataset, cancelDataset } from '../api/client'
 import StatsCards from '../components/datasets/StatsCards'
 import HFPushModal from '../components/datasets/HFPushModal'
 
@@ -81,12 +81,28 @@ export default function DatasetDetail() {
           </p>
         </div>
 
-        {currentDataset.status === 'completed' && (
-          <button className="btn btn-primary" onClick={() => setShowHFModal(true)}>
-            <Upload size={16} />
-            Push to HuggingFace
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isRunning && (
+            <button
+              className="btn btn-danger"
+              onClick={async () => {
+                try {
+                  await cancelDataset(datasetId)
+                  fetchDataset(datasetId)
+                } catch { /* ignore */ }
+              }}
+            >
+              <StopCircle size={16} />
+              Cancel
+            </button>
+          )}
+          {currentDataset.status === 'completed' && (
+            <button className="btn btn-primary" onClick={() => setShowHFModal(true)}>
+              <Upload size={16} />
+              Push to HuggingFace
+            </button>
+          )}
+        </div>
       </div>
 
       {/* HF Repo link */}
