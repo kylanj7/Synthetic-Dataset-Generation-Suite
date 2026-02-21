@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, CheckCircle, XCircle, StopCircle, Plus, Trash2, Layers } from 'lucide-react'
-import { getProviders, cancelDataset, createBatchDatasets, ProviderInfo } from '../api/client'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ChevronDown, ChevronRight, CheckCircle, XCircle, StopCircle, Plus, Trash2, Layers, FileText } from 'lucide-react'
+import { getProviders, cancelDataset, createBatchDatasets, createDatasetFromPapers, ProviderInfo } from '../api/client'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
 
@@ -14,6 +14,13 @@ interface BatchRow {
 let nextRowId = 1
 
 export default function CreateDataset() {
+  const [searchParams] = useSearchParams()
+  const fromPapersParam = searchParams.get('from_papers')
+  const paperIds = fromPapersParam
+    ? fromPapersParam.split(',').map(Number).filter((n) => !isNaN(n) && n > 0)
+    : []
+  const isFromPapers = paperIds.length > 0
+
   const [topic, setTopic] = useState('')
   const [targetSize, setTargetSize] = useState(100)
   const [provider, setProvider] = useState<string>('ollama')
@@ -21,6 +28,7 @@ export default function CreateDataset() {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [systemPrompt, setSystemPrompt] = useState('')
   const [temperature, setTemperature] = useState(0.7)
+  const [maxTokens, setMaxTokens] = useState(4096)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [generating, setGenerating] = useState(false)
   const [datasetId, setDatasetId] = useState<number | null>(null)
@@ -57,6 +65,26 @@ export default function CreateDataset() {
   const selectedProvider = providers.find((p) => p.name === provider)
 
   const handleGenerate = async () => {
+    if (isFromPapers) {
+      setError('')
+      setGenerating(true)
+      try {
+        const ds = await createDatasetFromPapers({
+          paper_ids: paperIds,
+          provider: provider || undefined,
+          model: model || undefined,
+          system_prompt: systemPrompt || undefined,
+          temperature,
+          max_tokens: maxTokens,
+        })
+        setDatasetId(ds.id)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to create dataset from papers')
+        setGenerating(false)
+      }
+      return
+    }
+
     if (!topic.trim()) return
     setError('')
     setGenerating(true)
@@ -69,6 +97,7 @@ export default function CreateDataset() {
         target_size: targetSize,
         system_prompt: systemPrompt || undefined,
         temperature,
+        max_tokens: maxTokens,
       })
       setDatasetId(ds.id)
     } catch (e) {
@@ -92,6 +121,7 @@ export default function CreateDataset() {
           target_size: r.targetSize,
           system_prompt: systemPrompt || undefined,
           temperature,
+          max_tokens: maxTokens,
         }))
       )
       navigate('/datasets')
@@ -122,35 +152,56 @@ export default function CreateDataset() {
       <div className="page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h1>Create Dataset</h1>
-            <p>Generate a synthetic Q&A dataset from academic papers</p>
+            <h1>{isFromPapers ? 'Generate from Papers' : 'Create Dataset'}</h1>
+            <p>{isFromPapers ? 'Generate Q&A pairs from selected papers' : 'Generate a synthetic Q&A dataset from academic papers'}</p>
           </div>
-          <button
-            onClick={() => setBatchMode(!batchMode)}
-            disabled={generating}
-            style={{
-              background: batchMode ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
-              border: '1px solid ' + (batchMode ? 'var(--accent-blue)' : 'var(--border-primary)'),
-              color: batchMode ? '#fff' : 'var(--text-secondary)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '13px',
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <Layers size={14} />
-            Batch Mode
-          </button>
+          {!isFromPapers && (
+            <button
+              onClick={() => setBatchMode(!batchMode)}
+              disabled={generating}
+              style={{
+                background: batchMode ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+                border: '1px solid ' + (batchMode ? 'var(--accent-blue)' : 'var(--border-primary)'),
+                color: batchMode ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Layers size={14} />
+              Batch Mode
+            </button>
+          )}
         </div>
       </div>
 
       <div className="card" style={{ marginBottom: '20px' }}>
+        {/* Paper-based generation banner */}
+        {isFromPapers && (
+          <div style={{
+            marginBottom: '16px',
+            padding: '10px 14px',
+            background: 'rgba(126, 184, 255, 0.1)',
+            border: '1px solid rgba(126, 184, 255, 0.2)',
+            borderRadius: 'var(--radius-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            color: 'var(--text-secondary)',
+          }}>
+            <FileText size={16} style={{ color: 'var(--accent-blue)' }} />
+            Generating from {paperIds.length} selected paper{paperIds.length !== 1 ? 's' : ''}
+          </div>
+        )}
+
         {/* Single mode: Topic */}
-        {!batchMode && (
+        {!batchMode && !isFromPapers && (
           <div style={{ marginBottom: '20px' }}>
             <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
               What should this dataset be about?
@@ -242,46 +293,73 @@ export default function CreateDataset() {
           </div>
         )}
 
-        {/* Single mode: Target size, Provider, Model */}
+        {/* Single/papers mode: Provider, Model (+ Target Size for non-paper mode) */}
         {!batchMode && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
-            <div>
-              <label>Target Size</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="number"
-                  value={targetSize}
-                  onChange={(e) => setTargetSize(Math.max(10, parseInt(e.target.value) || 10))}
-                  min={10}
+          isFromPapers ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+              <div>
+                <label>Provider</label>
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
                   disabled={generating}
-                  style={{ width: '100px' }}
+                >
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Model</label>
+                <input
+                  type="text"
+                  placeholder={selectedProvider?.default_model || '(default)'}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={generating}
                 />
-                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>pairs</span>
               </div>
             </div>
-            <div>
-              <label>Provider</label>
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-                disabled={generating}
-              >
-                {providers.map((p) => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
-                ))}
-              </select>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+              <div>
+                <label>Target Size</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="number"
+                    value={targetSize}
+                    onChange={(e) => setTargetSize(Math.max(10, parseInt(e.target.value) || 10))}
+                    min={10}
+                    disabled={generating}
+                    style={{ width: '100px' }}
+                  />
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>pairs</span>
+                </div>
+              </div>
+              <div>
+                <label>Provider</label>
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  disabled={generating}
+                >
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Model</label>
+                <input
+                  type="text"
+                  placeholder={selectedProvider?.default_model || '(default)'}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={generating}
+                />
+              </div>
             </div>
-            <div>
-              <label>Model</label>
-              <input
-                type="text"
-                placeholder={selectedProvider?.default_model || '(default)'}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                disabled={generating}
-              />
-            </div>
-          </div>
+          )
         )}
 
         {/* Batch mode: Shared Provider/Model */}
@@ -388,6 +466,33 @@ export default function CreateDataset() {
                   style={{ width: '200px' }}
                 />
               </div>
+              <div style={{ marginTop: '12px' }}>
+                <label>Max Tokens: {maxTokens}</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="range"
+                    min={256}
+                    max={8192}
+                    step={256}
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                    disabled={generating}
+                    style={{ width: '200px' }}
+                  />
+                  <input
+                    type="number"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(Math.max(256, Math.min(8192, parseInt(e.target.value) || 256)))}
+                    min={256}
+                    max={8192}
+                    disabled={generating}
+                    style={{ width: '80px', fontSize: '13px', padding: '4px 8px' }}
+                  />
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Higher values produce longer, more detailed answers (default: 4096)
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -412,10 +517,10 @@ export default function CreateDataset() {
           <button
             className="btn btn-primary"
             onClick={handleGenerate}
-            disabled={generating || !topic.trim()}
+            disabled={generating || (!isFromPapers && !topic.trim())}
             style={{ width: '100%', justifyContent: 'center', padding: '10px 20px', fontSize: '15px' }}
           >
-            {generating ? <span className="spinner" /> : 'Generate Dataset'}
+            {generating ? <span className="spinner" /> : isFromPapers ? `Generate from ${paperIds.length} Papers` : 'Generate Dataset'}
           </button>
         ) : (
           <button

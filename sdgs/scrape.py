@@ -4,12 +4,50 @@ import json
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .tracker import GPUTracker, TokenTracker
 from .validate import validate_output
+
+
+# ── Browser-like headers for PDF fetching ─────────────────────────────
+
+_PDF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/pdf,*/*;q=0.8",
+}
+
+
+# ── Retry session ─────────────────────────────────────────────────────
+
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Return a shared requests.Session with automatic retry on transient errors."""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        retry = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503],
+            allowed_methods=["GET"],
+            respect_retry_after_header=True,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        _session.mount("https://", adapter)
+        _session.mount("http://", adapter)
+    return _session
 
 
 # ── Rate limiting ──────────────────────────────────────────────────────
@@ -169,7 +207,7 @@ def _fetch_pdf_text(pdf_url: str, paper_id: str = "") -> tuple[str | None, str |
     try:
         import pymupdf
 
-        resp = requests.get(pdf_url, timeout=60, stream=True)
+        resp = _get_session().get(pdf_url, headers=_PDF_HEADERS, timeout=60, stream=True)
         resp.raise_for_status()
 
         raw_bytes = resp.content
@@ -206,7 +244,7 @@ def _unpaywall_pdf_url(doi: str) -> str | None:
     try:
         url = f"https://api.unpaywall.org/v2/{doi}"
         params = {"email": "sdgs-tool@example.com"}
-        resp = requests.get(url, params=params, timeout=15)
+        resp = _get_session().get(url, params=params, headers=_PDF_HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         best_oa = data.get("best_oa_location") or {}
@@ -215,10 +253,53 @@ def _unpaywall_pdf_url(doi: str) -> str | None:
         return None
 
 
+def _pmc_pdf_url(doi: str) -> str | None:
+    """Try to find an open-access PDF via PubMed Central (for biomedical papers)."""
+    if not doi:
+        return None
+    try:
+        # Step 1: DOI → PMCID via NCBI ID Converter
+        conv_url = "https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/"
+        conv_params = {"ids": doi, "format": "json"}
+        resp = _get_session().get(conv_url, params=conv_params, headers=_PDF_HEADERS, timeout=15)
+        resp.raise_for_status()
+        records = resp.json().get("records", [])
+        if not records:
+            return None
+        pmcid = records[0].get("pmcid")
+        if not pmcid:
+            return None
+
+        # Step 2: PMCID → PDF link via OA service
+        oa_url = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
+        oa_params = {"id": pmcid}
+        resp = _get_session().get(oa_url, params=oa_params, headers=_PDF_HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        root = ET.fromstring(resp.text)
+        for link in root.iter("link"):
+            href = link.get("href", "")
+            fmt = link.get("format", "")
+            if fmt == "pdf" or href.endswith(".pdf"):
+                # Convert FTP URLs to HTTPS
+                if href.startswith("ftp://"):
+                    href = href.replace("ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/", "https://pmc.ncbi.nlm.nih.gov/articles/", 1)
+                return href
+        return None
+    except Exception:
+        return None
+
+
 def fetch_full_text(paper: dict) -> str | None:
-    """Fetch full text for a paper. Tries direct PDF URL, then Unpaywall fallback.
+    """Fetch full text for a paper via multi-level fallback chain.
 
     Also sets paper["pdf_path"] if a PDF is successfully saved to disk.
+
+    Fallback chain:
+        1. Direct pdf_url (from search metadata)
+        2. arXiv canonical PDF (if paper_id starts with "arxiv:")
+        3. PubMed Central (if paper has DOI)
+        4. Unpaywall (if paper has DOI)
 
     Args:
         paper: Paper metadata dict (modified in-place with pdf_path).
@@ -228,24 +309,50 @@ def fetch_full_text(paper: dict) -> str | None:
     """
     title_short = paper["title"][:60]
     paper_id = paper.get("paper_id", "")
+    tried_urls: set[str] = set()
 
-    # Try direct PDF URL first
-    if paper.get("pdf_url"):
-        print(f"    Fetching PDF: {title_short}...")
-        text, pdf_path = _fetch_pdf_text(paper["pdf_url"], paper_id)
+    def _try_url(url: str) -> str | None:
+        if not url or url in tried_urls:
+            return None
+        tried_urls.add(url)
+        text, pdf_path = _fetch_pdf_text(url, paper_id)
         if pdf_path:
             paper["pdf_path"] = pdf_path
+        return text
+
+    # 1. Direct PDF URL from search metadata
+    if paper.get("pdf_url"):
+        print(f"    Fetching PDF: {title_short}...")
+        text = _try_url(paper["pdf_url"])
         if text:
             return text
 
-    # Unpaywall fallback for DOI-bearing papers
+    # 2. arXiv canonical PDF fallback
+    if paper_id.startswith("arxiv:"):
+        arxiv_id = paper_id.removeprefix("arxiv:")
+        arxiv_pdf = f"https://arxiv.org/pdf/{arxiv_id}"
+        if arxiv_pdf not in tried_urls:
+            print(f"    Trying arXiv PDF fallback: {title_short}...")
+            _rate_limit("arxiv", 0.34)
+            text = _try_url(arxiv_pdf)
+            if text:
+                return text
+
+    # 3. PubMed Central fallback (biomedical papers)
+    if paper.get("doi"):
+        print(f"    Trying PMC for: {title_short}...")
+        pmc_url = _pmc_pdf_url(paper["doi"])
+        if pmc_url:
+            text = _try_url(pmc_url)
+            if text:
+                return text
+
+    # 4. Unpaywall fallback
     if paper.get("doi"):
         print(f"    Trying Unpaywall for: {title_short}...")
         oa_url = _unpaywall_pdf_url(paper["doi"])
         if oa_url:
-            text, pdf_path = _fetch_pdf_text(oa_url, paper_id)
-            if pdf_path:
-                paper["pdf_path"] = pdf_path
+            text = _try_url(oa_url)
             if text:
                 return text
 
@@ -302,13 +409,14 @@ def _parse_qa_pairs(content: str, paper: dict) -> list[dict]:
     return pairs
 
 
-def _generate_qa_for_paper(
+def generate_qa_for_paper(
     client,
     model: str,
     extra_params: dict,
     task_config: dict,
     paper: dict,
     token_tracker: TokenTracker | None = None,
+    max_tokens: int = 4096,
 ) -> list[dict]:
     """Generate Q&A pairs for a single paper using the LLM.
 
@@ -355,6 +463,7 @@ def _generate_qa_for_paper(
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=temperature,
+                max_tokens=max_tokens,
             )
             if api_params:
                 kwargs["extra_body"] = api_params
@@ -394,6 +503,9 @@ def run_scrape(
     top_n: int,
     output_path: str,
     collect_only: bool = False,
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ):
     """Orchestrate the full scrape pipeline.
 
@@ -476,6 +588,14 @@ def run_scrape(
     with open(task_config_path) as f:
         task_config = yaml.safe_load(f)
 
+    # Apply user overrides from web UI
+    if system_prompt:
+        task_config["generation"]["system_prompt"] = system_prompt
+    if temperature is not None:
+        task_config["generation"]["temperature"] = temperature
+
+    effective_max_tokens = max_tokens if max_tokens is not None else 4096
+
     client, model_name, extra_params = get_client(provider, model=model, api_key=api_key)
     rate_delay = extra_params.get("_rate_limit_delay", 0)
 
@@ -499,8 +619,9 @@ def run_scrape(
         content_type = "full text" if paper.get("full_text") else "abstract"
         print(f"\n[{i+1}/{len(papers_with_content)}] {title_short}... ({content_type})")
 
-        pairs = _generate_qa_for_paper(
-            client, model_name, extra_params, task_config, paper, token_tracker
+        pairs = generate_qa_for_paper(
+            client, model_name, extra_params, task_config, paper, token_tracker,
+            max_tokens=effective_max_tokens,
         )
 
         if pairs:

@@ -4,13 +4,31 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from ..db.database import get_db
-from ..db.models import Paper
+from ..db.models import Paper, Dataset
 from ..deps import CurrentUser, get_current_user
 from ..schemas import PaperListResponse, PaperResponse
 
 router = APIRouter()
+
+
+@router.get("/topics", response_model=list[str])
+def get_paper_topics(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return distinct dataset topics that have papers for this user."""
+    rows = (
+        db.query(Dataset.topic)
+        .join(Paper, Paper.dataset_id == Dataset.id)
+        .filter(Paper.user_id == current_user.id)
+        .distinct()
+        .all()
+    )
+    topics = sorted(t[0] for t in rows if t[0])
+    return topics
 
 
 @router.get("", response_model=PaperListResponse)
@@ -19,6 +37,7 @@ def list_papers(
     per_page: int = Query(50, ge=1, le=200),
     search: str | None = None,
     dataset_id: int | None = None,
+    topic: str | None = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -26,6 +45,11 @@ def list_papers(
 
     if dataset_id is not None:
         query = query.filter(Paper.dataset_id == dataset_id)
+
+    if topic:
+        query = query.join(Dataset, Paper.dataset_id == Dataset.id).filter(
+            Dataset.topic.ilike(f"%{topic}%")
+        )
 
     if search:
         pattern = f"%{search}%"

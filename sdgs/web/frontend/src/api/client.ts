@@ -80,6 +80,7 @@ export interface Dataset {
   output_path: string | null
   system_prompt: string | null
   temperature: number
+  max_tokens: number | null
   hf_repo: string | null
   created_at: string | null
   started_at: string | null
@@ -101,6 +102,7 @@ export interface CreateDatasetRequest {
   target_size?: number
   system_prompt?: string | null
   temperature?: number
+  max_tokens?: number | null
 }
 
 export const createDataset = (data: CreateDatasetRequest) =>
@@ -144,6 +146,27 @@ export const getDatasetSamples = (id: number, page = 1, search?: string) => {
   if (search) params.set('search', search)
   return request<DatasetSamplesResponse>(`/datasets/${id}/samples?${params}`)
 }
+
+// Generate from papers
+export interface CreateFromPapersRequest {
+  paper_ids: number[]
+  provider?: string | null
+  model?: string | null
+  system_prompt?: string | null
+  temperature?: number
+  max_tokens?: number | null
+}
+
+export const createDatasetFromPapers = (data: CreateFromPapersRequest) =>
+  request<Dataset>('/datasets/from-papers', { method: 'POST', body: JSON.stringify(data) })
+
+// Import from HuggingFace
+export const importFromHuggingFace = (data: { repo_id: string; split?: string }) =>
+  request<Dataset>('/datasets/import-hf', { method: 'POST', body: JSON.stringify(data) })
+
+// Delete QA pair
+export const deleteQAPair = (datasetId: number, qaId: number) =>
+  request<{ status: string }>(`/datasets/${datasetId}/samples/${qaId}`, { method: 'DELETE' })
 
 // HuggingFace Push
 export interface HFPushResponse {
@@ -245,12 +268,15 @@ export interface PaperListResponse {
   per_page: number
 }
 
-export const getPapers = (page = 1, search?: string, datasetId?: number) => {
+export const getPapers = (page = 1, search?: string, datasetId?: number, topic?: string) => {
   const params = new URLSearchParams({ page: String(page), per_page: '50' })
   if (search) params.set('search', search)
   if (datasetId) params.set('dataset_id', String(datasetId))
+  if (topic) params.set('topic', topic)
   return request<PaperListResponse>(`/papers?${params}`)
 }
+
+export const getPaperTopics = () => request<string[]>('/papers/topics')
 
 // Galaxy
 export interface GalaxyNode {

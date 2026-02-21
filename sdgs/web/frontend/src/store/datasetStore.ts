@@ -22,6 +22,7 @@ interface DatasetStore {
   deleteDataset: (id: number) => Promise<void>
   fetchSamples: (id: number, page?: number, search?: string) => Promise<void>
   updateDataset: (dataset: Dataset) => void
+  removeSample: (qaId: number) => void
 }
 
 export const useDatasetStore = create<DatasetStore>((set) => ({
@@ -98,5 +99,26 @@ export const useDatasetStore = create<DatasetStore>((set) => ({
       currentDataset: dataset,
       datasets: state.datasets.map((d) => (d.id === dataset.id ? dataset : d)),
     }))
+  },
+
+  removeSample: (qaId: number) => {
+    set((state) => {
+      const removed = state.samples.find((s) => s.id === qaId)
+      const updatedDataset = state.currentDataset ? {
+        ...state.currentDataset,
+        actual_size: Math.max(0, state.currentDataset.actual_size - 1),
+        valid_count: removed?.is_valid
+          ? Math.max(0, state.currentDataset.valid_count - 1)
+          : state.currentDataset.valid_count,
+        invalid_count: !removed?.is_valid
+          ? Math.max(0, state.currentDataset.invalid_count - 1)
+          : state.currentDataset.invalid_count,
+      } : null
+      return {
+        samples: state.samples.filter((s) => s.id !== qaId),
+        samplesTotal: Math.max(0, state.samplesTotal - 1),
+        currentDataset: updatedDataset,
+      }
+    })
   },
 }))

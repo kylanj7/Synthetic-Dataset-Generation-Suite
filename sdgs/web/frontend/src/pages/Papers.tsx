@@ -1,68 +1,135 @@
 import { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Search, ExternalLink, Download, ChevronLeft, ChevronRight } from 'lucide-react'
-import { getPapers, PaperInfo } from '../api/client'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Search, ExternalLink, Download, ChevronLeft, ChevronRight, HardDrive, Sparkles } from 'lucide-react'
+import { getPapers, getPaperTopics, PaperInfo } from '../api/client'
 
 export default function Papers() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [papers, setPapers] = useState<PaperInfo[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState(searchParams.get('search') || '')
   const [loading, setLoading] = useState(true)
+  const [topics, setTopics] = useState<string[]>([])
+  const [selectedTopic, setSelectedTopic] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
 
   const datasetId = searchParams.get('dataset_id')
     ? Number(searchParams.get('dataset_id'))
     : undefined
 
   useEffect(() => {
+    getPaperTopics().then(setTopics).catch(() => {})
+  }, [])
+
+  useEffect(() => {
     setLoading(true)
-    getPapers(page, search || undefined, datasetId)
+    getPapers(page, search || undefined, datasetId, selectedTopic || undefined)
       .then((res) => {
         setPapers(res.papers)
         setTotal(res.total)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [page, search, datasetId])
+  }, [page, search, datasetId, selectedTopic])
 
   const totalPages = Math.ceil(total / 50)
 
   const handleSearch = (val: string) => {
     setSearch(val)
     setPage(1)
+    setSelectedIds(new Set())
     const params = new URLSearchParams(searchParams)
     if (val) params.set('search', val)
     else params.delete('search')
     setSearchParams(params, { replace: true })
   }
 
+  const handleTopicChange = (val: string) => {
+    setSelectedTopic(val)
+    setPage(1)
+    setSelectedIds(new Set())
+  }
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    const currentPageIds = papers.map((p) => p.id)
+    const allSelected = currentPageIds.every((id) => selectedIds.has(id))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        currentPageIds.forEach((id) => next.delete(id))
+      } else {
+        currentPageIds.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const handleGenerateFromSelected = () => {
+    const ids = Array.from(selectedIds).join(',')
+    navigate(`/create?from_papers=${ids}`)
+  }
+
+  const allOnPageSelected = papers.length > 0 && papers.every((p) => selectedIds.has(p.id))
+
   return (
     <div>
-      <div className="page-header">
-        <h1>Papers</h1>
-        <p>All scholarly papers used in dataset generation ({total} total)</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1>Papers</h1>
+          <p>All scholarly papers used in dataset generation ({total} total)</p>
+        </div>
+        {selectedIds.size > 0 && (
+          <button className="btn btn-primary" onClick={handleGenerateFromSelected}>
+            <Sparkles size={16} />
+            Generate from {selectedIds.size} Selected
+          </button>
+        )}
       </div>
 
-      {/* Search */}
-      <div style={{ marginBottom: '16px', position: 'relative' }}>
-        <Search
-          size={16}
-          style={{
-            position: 'absolute',
-            left: '12px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: 'var(--text-muted)',
-          }}
-        />
-        <input
-          type="text"
-          placeholder="Search papers by title..."
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-          style={{ paddingLeft: '36px', fontSize: '14px' }}
-        />
+      {/* Search + Topic Filter */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Search
+            size={16}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)',
+            }}
+          />
+          <input
+            type="text"
+            placeholder="Search papers by title..."
+            value={search}
+            onChange={(e) => handleSearch(e.target.value)}
+            style={{ paddingLeft: '36px', fontSize: '14px', width: '100%' }}
+          />
+        </div>
+        {topics.length > 0 && (
+          <select
+            value={selectedTopic}
+            onChange={(e) => handleTopicChange(e.target.value)}
+            style={{ width: '220px', fontSize: '14px' }}
+          >
+            <option value="">All Topics</option>
+            {topics.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {datasetId && (
@@ -103,6 +170,14 @@ export default function Papers() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <th style={{ ...thStyle, width: '40px', textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={allOnPageSelected}
+                  onChange={toggleSelectAll}
+                  style={{ cursor: 'pointer' }}
+                />
+              </th>
               <th style={thStyle}>Title</th>
               <th style={{ ...thStyle, width: '180px' }}>Authors</th>
               <th style={{ ...thStyle, width: '60px', textAlign: 'center' }}>Year</th>
@@ -115,21 +190,29 @@ export default function Papers() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <td colSpan={8} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
                   <span className="spinner" />
                 </td>
               </tr>
             ) : papers.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <td colSpan={8} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
                   {search ? 'No papers match your search' : 'No papers yet. Generate a dataset to see papers here.'}
                 </td>
               </tr>
             ) : (
               papers.map((p) => (
                 <tr key={p.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <td style={{ ...tdStyle, textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(p.id)}
+                      onChange={() => toggleSelect(p.id)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </td>
                   <td style={tdStyle}>
-                    <div style={{ fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.4 }}>
+                    <div style={{ fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.4, display: 'flex', alignItems: 'center', gap: '6px' }}>
                       {p.pdf_path ? (
                         <a
                           href={`/api/papers/${p.id}/pdf`}
@@ -142,6 +225,11 @@ export default function Papers() {
                         </a>
                       ) : (
                         p.title
+                      )}
+                      {p.pdf_path && (
+                        <span title="PDF saved locally" style={{ display: 'flex', flexShrink: 0 }}>
+                          <HardDrive size={12} style={{ color: 'var(--accent-green)' }} />
+                        </span>
                       )}
                     </div>
                   </td>

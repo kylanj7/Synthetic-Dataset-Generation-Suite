@@ -38,6 +38,21 @@ class CreateDatasetRequest(BaseModel):
     target_size: int = 100
     system_prompt: str | None = None
     temperature: float = 0.7
+    max_tokens: int | None = None
+
+
+class CreateFromPapersRequest(BaseModel):
+    paper_ids: list[int]
+    provider: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
+    temperature: float = 0.7
+    max_tokens: int | None = None
+
+
+class ImportHFRequest(BaseModel):
+    repo_id: str  # e.g. "tatsu-lab/alpaca"
+    split: str | None = None  # e.g. "train"
 
 
 class BatchCreateRequest(BaseModel):
@@ -64,6 +79,7 @@ class DatasetResponse(BaseModel):
     output_path: str | None = None
     system_prompt: str | None = None
     temperature: float = 0.7
+    max_tokens: int | None = None
     hf_repo: str | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None

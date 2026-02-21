@@ -4,7 +4,7 @@ import { Search, Upload, StopCircle, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
-import { getDataset, cancelDataset } from '../api/client'
+import { getDataset, cancelDataset, deleteQAPair } from '../api/client'
 import StatsCards from '../components/datasets/StatsCards'
 import HFPushModal from '../components/datasets/HFPushModal'
 
@@ -22,12 +22,13 @@ export default function DatasetDetail() {
   const navigate = useNavigate()
   const {
     currentDataset, samples, samplesTotal, samplesPage,
-    loading, fetchDataset, fetchSamples, updateDataset, deleteDataset,
+    loading, fetchDataset, fetchSamples, updateDataset, deleteDataset, removeSample,
   } = useDatasetStore()
   const [search, setSearch] = useState('')
   const [showHFModal, setShowHFModal] = useState(false)
   const [expandedQA, setExpandedQA] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmRemoveQA, setConfirmRemoveQA] = useState<number | null>(null)
   const logViewerRef = useRef<HTMLDivElement>(null)
 
   // SSE for running datasets
@@ -242,7 +243,7 @@ export default function DatasetDetail() {
                           </div>
                         )}
                       </div>
-                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' }}>
                         {qa.was_healed && (
                           <span className="badge" style={{ background: 'rgba(255, 214, 102, 0.2)', color: 'var(--accent-gold)', fontSize: '11px' }}>
                             healed
@@ -251,6 +252,59 @@ export default function DatasetDetail() {
                         <span className={`badge ${qa.is_valid ? 'badge-completed' : 'badge-failed'}`} style={{ fontSize: '11px' }}>
                           {qa.is_valid ? 'valid' : 'invalid'}
                         </span>
+                        {confirmRemoveQA === qa.id ? (
+                          <div
+                            style={{ display: 'flex', gap: '4px', alignItems: 'center' }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span style={{ fontSize: '11px', color: 'var(--accent-pink)' }}>Remove?</span>
+                            <button
+                              className="btn btn-danger"
+                              style={{ padding: '2px 6px', fontSize: '11px' }}
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                if (qa.id != null) {
+                                  try {
+                                    await deleteQAPair(datasetId, qa.id)
+                                    removeSample(qa.id)
+                                  } catch { /* ignore */ }
+                                }
+                                setConfirmRemoveQA(null)
+                              }}
+                            >
+                              Yes
+                            </button>
+                            <button
+                              className="btn"
+                              style={{ padding: '2px 6px', fontSize: '11px' }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setConfirmRemoveQA(null)
+                              }}
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setConfirmRemoveQA(qa.id)
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                            title="Remove QA pair"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </div>
 
