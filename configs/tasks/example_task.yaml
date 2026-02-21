@@ -1,0 +1,46 @@
+name: "Example Domain Task"
+domain: "general"
+
+# Data source — change this to your data
+source:
+  type: local_json            # Options: huggingface, local_json, local_jsonl
+  path: "./data/my_questions.json"
+  fields:
+    question: "question"
+    answer: "answer"
+    metadata: []              # Optional extra fields to carry through
+
+generation:
+  temperature: 0.3
+  max_retries: 3
+  system_prompt: |
+    You are a helpful expert. Answer the question step by step.
+    Wrap your reasoning in <think> tags and the final answer in <answer> tags.
+
+    <think>
+    [Your step-by-step reasoning]
+    </think>
+
+    <answer>
+    [Your final answer]
+    </answer>
+
+  user_prompt_template: |
+    Question: {question}
+
+    Reference: {answer}
+
+    Provide a step-by-step solution.
+
+validation:
+  require_tags:
+    - ["<think>", "</think>"]
+    - ["<answer>", "</answer>"]
+  require_latex: false
+  min_reasoning_length: 50
+  min_answer_length: 10
+  check_latex_consistency: false
+  topics: []
+
+output:
+  format: jsonl

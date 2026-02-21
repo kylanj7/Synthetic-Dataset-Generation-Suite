@@ -1,0 +1,17 @@
+[project]
+name = "synthetic-dataset-generation-suite"
+version = "0.1.0"
+description = "Multi-provider synthetic reasoning dataset generation pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0",
+    "pyyaml",
+    "click",
+    "datasets",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+sdgs = "sdgs.cli:cli"

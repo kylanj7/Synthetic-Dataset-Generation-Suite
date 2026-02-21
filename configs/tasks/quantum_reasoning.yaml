@@ -1,0 +1,85 @@
+name: "Quantum Physics Reasoning"
+domain: "quantum_physics"
+
+source:
+  type: huggingface
+  dataset: "BoltzmannEntropy/QuantumLLMInstruct"
+  split: "train"
+  fields:
+    question: "problem"
+    answer: "solution"
+    metadata:
+      - "main_domain"
+      - "sub_domain"
+
+generation:
+  temperature: 0.2
+  max_retries: 3
+  system_prompt: |
+    You are an expert Quantum Physicist and Logic Engine. Your goal is to solve complex quantum mechanics and quantum computing problems using a rigorous, step-by-step reasoning process.
+
+    ### STRICTURES:
+    1. OUTPUT FORMAT: You MUST wrap your internal derivation inside <think> tags and provide the final, concise solution inside <answer> tags.
+    2. MATHEMATICAL RIGOR: Use LaTeX for ALL mathematical expressions. Never use plain text for variables (e.g., use $\psi$, not 'psi').
+    3. THE "FIRST PRINCIPLES" RULE: In the <think> section, always:
+        - Define the Hilbert space dimension.
+        - Write out the full Hamiltonian or Density Matrix explicitly before simplifying.
+        - Check for normalization/unitarity at each step.
+        - If a calculation is complex, perform a "sanity check" (e.g., "Does this limit recover the ground state?").
+    4. COMPLETENESS: Never truncate your response. If the calculation is long, prioritize mathematical steps over conversational filler.
+    5. NO OMISSIONS: Do not skip steps with "it follows that" unless you have shown the algebraic substitution immediately prior.
+    6. LENGTH LIMIT: If your derivation exceeds 1,000 words, summarize the key mathematical steps and move immediately to the <answer> block. Do not loop or repeat reasoning.
+
+    ### RESPONSE TEMPLATE:
+    <think>
+    [Step 1: Problem Decomposition]
+    [Step 2: Mathematical Setup/Operators]
+    [Step 3: Intermediate Calculations/Derivations]
+    [Step 4: Verification/Sanity Check]
+    </think>
+
+    <answer>
+    [Final concise result with units and core physical interpretation]
+    </answer>
+
+    CRITICAL: Responses with missing </answer> tags or plain-text math are REJECTED.
+
+  user_prompt_template: |
+    Question: {question}
+
+    Reference Answer: {answer}
+
+    Generate a complete step-by-step reasoning path leading to this answer. Remember:
+    - Use <think>...</think> for reasoning
+    - Use <answer>...</answer> for the final result
+    - ALL math must be in LaTeX format
+    - You MUST close both tags
+
+validation:
+  require_tags:
+    - ["<think>", "</think>"]
+    - ["<answer>", "</answer>"]
+  require_latex: true
+  min_reasoning_length: 100
+  min_answer_length: 10
+  # Domain-specific checks for the filter
+  check_latex_consistency: true
+  topics:
+    - "qubit"
+    - "entangle"
+    - "hamiltonian"
+    - "eigenvalue"
+    - "spin"
+    - "operator"
+    - "wave"
+    - "quantum"
+    - "state"
+    - "circuit"
+    - "gate"
+    - "measurement"
+    - "superposition"
+    - "decoherence"
+    - "density"
+
+output:
+  format: jsonl

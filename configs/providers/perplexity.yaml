@@ -1,0 +1,6 @@
+name: perplexity
+base_url: "https://api.perplexity.ai/"
+api_key_env: "PERPLEXITY_API_KEY"
+default_model: "sonar-pro"
+rate_limit_delay: 1.0
+extra_params: {}
