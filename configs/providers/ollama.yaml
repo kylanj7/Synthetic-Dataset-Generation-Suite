@@ -1,7 +1,7 @@
 name: ollama
 base_url: "http://localhost:11434/v1/"
 api_key_default: "ollama"
-default_model: "qwen3:32b"
+default_model: "nemotron-3-nano:latest"
 rate_limit_delay: 0
 extra_params:
   num_ctx: 16384

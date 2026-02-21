@@ -171,3 +171,24 @@ def tasks():
         with open(p) as f:
             config = yaml.safe_load(f)
         click.echo(f"  {p.stem:25s}  {config.get('name', '')}")
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option("--port", default=8000, type=int, help="Port to bind to")
+@click.option("--reload", "use_reload", is_flag=True, help="Enable auto-reload for development")
+def serve(host, port, use_reload):
+    """Launch the SDGS web interface."""
+    try:
+        import uvicorn
+    except ImportError:
+        raise click.ClickException(
+            "Web dependencies not installed. Run: pip install -e '.[web]'"
+        )
+    click.echo(f"Starting SDGS Web on http://{host}:{port}")
+    uvicorn.run(
+        "sdgs.web.app:app",
+        host=host,
+        port=port,
+        reload=use_reload,
+    )

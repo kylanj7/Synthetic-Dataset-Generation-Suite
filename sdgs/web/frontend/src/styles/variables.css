@@ -1,0 +1,45 @@
+:root {
+  /* Cosmic theme */
+  --bg-primary: #06060f;
+  --bg-secondary: #0d0d1a;
+  --bg-card: rgba(15, 15, 30, 0.8);
+  --bg-card-hover: rgba(20, 20, 40, 0.9);
+  --bg-input: rgba(15, 15, 35, 0.9);
+
+  --border-subtle: rgba(126, 184, 255, 0.12);
+  --border-glow: rgba(126, 184, 255, 0.25);
+
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888a8;
+  --text-muted: #555570;
+
+  /* Accent colors */
+  --accent-blue: #7eb8ff;
+  --accent-cyan: #6ee7d8;
+  --accent-gold: #ffd666;
+  --accent-purple: #c084fc;
+  --accent-pink: #ff7eb3;
+  --accent-green: #a3e635;
+  --accent-orange: #fb923c;
+
+  /* Status colors */
+  --status-pending: #8888a8;
+  --status-running: #7eb8ff;
+  --status-completed: #6ee7d8;
+  --status-failed: #ff7eb3;
+  --status-cancelled: #ffd666;
+
+  /* Spacing */
+  --sidebar-width: 240px;
+  --header-height: 56px;
+
+  /* Shadows */
+  --glow-blue: 0 0 20px rgba(126, 184, 255, 0.15);
+  --glow-cyan: 0 0 20px rgba(110, 231, 216, 0.15);
+  --glow-purple: 0 0 20px rgba(192, 132, 252, 0.15);
+
+  /* Border radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+}
