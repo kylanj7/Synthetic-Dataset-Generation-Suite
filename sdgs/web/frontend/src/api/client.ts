@@ -106,6 +106,9 @@ export interface CreateDatasetRequest {
 export const createDataset = (data: CreateDatasetRequest) =>
   request<Dataset>('/datasets', { method: 'POST', body: JSON.stringify(data) })
 
+export const createBatchDatasets = (datasets: CreateDatasetRequest[]) =>
+  request<Dataset[]>('/datasets/batch', { method: 'POST', body: JSON.stringify({ datasets }) })
+
 export const getDatasets = (page = 1) =>
   request<DatasetListResponse>(`/datasets?page=${page}`)
 
@@ -114,6 +117,9 @@ export const getDataset = (id: number) =>
 
 export const cancelDataset = (id: number) =>
   request<{ status: string }>(`/datasets/${id}/cancel`, { method: 'POST' })
+
+export const deleteDataset = (id: number) =>
+  request<{ status: string }>(`/datasets/${id}`, { method: 'DELETE' })
 
 export interface QAPair {
   id: number | null
@@ -214,6 +220,37 @@ export const saveS2Token = (token: string) =>
 
 export const deleteS2Token = () =>
   request<{ status: string }>('/settings/s2-token', { method: 'DELETE' })
+
+// Papers
+export interface PaperInfo {
+  id: number
+  paper_id: string | null
+  title: string
+  authors: string[]
+  abstract: string | null
+  year: number | null
+  doi: string | null
+  url: string | null
+  source: string | null
+  citation_count: number
+  qa_pair_count: number
+  pdf_path: string | null
+  dataset_id: number | null
+}
+
+export interface PaperListResponse {
+  papers: PaperInfo[]
+  total: number
+  page: number
+  per_page: number
+}
+
+export const getPapers = (page = 1, search?: string, datasetId?: number) => {
+  const params = new URLSearchParams({ page: String(page), per_page: '50' })
+  if (search) params.set('search', search)
+  if (datasetId) params.set('dataset_id', String(datasetId))
+  return request<PaperListResponse>(`/papers?${params}`)
+}
 
 // Galaxy
 export interface GalaxyNode {

@@ -81,6 +81,7 @@ class Paper(Base):
 
     citation_count = Column(Integer, default=0)
     has_full_text = Column(Boolean, default=False)
+    pdf_path = Column(String(500), nullable=True)
     keywords = Column(JSON, default=list)
     qa_pair_count = Column(Integer, default=0)
 

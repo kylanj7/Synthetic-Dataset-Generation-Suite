@@ -146,8 +146,11 @@ def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
                     authors=p_data.get("authors", []),
                     abstract=p_data.get("abstract", ""),
                     year=p_data.get("year"),
+                    doi=p_data.get("doi"),
                     url=p_data.get("url", ""),
+                    source=p_data.get("source", ""),
                     citation_count=p_data.get("citation_count", 0),
+                    pdf_path=p_data.get("pdf_path"),
                     user_id=ds.user_id,
                     dataset_id=ds.id,
                 )

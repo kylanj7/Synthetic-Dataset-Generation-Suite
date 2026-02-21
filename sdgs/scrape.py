@@ -159,15 +159,30 @@ def search_papers(topic: str, max_results: int = 20) -> list[dict]:
 
 # ── Full-text extraction ───────────────────────────────────────────────
 
-def _fetch_pdf_text(pdf_url: str) -> str | None:
-    """Download PDF to memory, extract text with PyMuPDF. No file saved to disk."""
+def _fetch_pdf_text(pdf_url: str, paper_id: str = "") -> tuple[str | None, str | None]:
+    """Download PDF, save to disk, extract text with PyMuPDF.
+
+    Returns:
+        Tuple of (extracted_text, pdf_path) where pdf_path is the saved file
+        path relative to the project root, or None if download/extraction failed.
+    """
     try:
         import pymupdf
 
         resp = requests.get(pdf_url, timeout=60, stream=True)
         resp.raise_for_status()
 
-        pdf_bytes = io.BytesIO(resp.content)
+        raw_bytes = resp.content
+
+        # Save PDF to data/pdfs/
+        pdf_dir = Path(__file__).resolve().parent.parent / "data" / "pdfs"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', paper_id)[:100] if paper_id else "unknown"
+        pdf_file = pdf_dir / f"{safe_name}.pdf"
+        pdf_file.write_bytes(raw_bytes)
+        pdf_path = str(pdf_file)
+
+        pdf_bytes = io.BytesIO(raw_bytes)
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
 
         text_parts = []
@@ -176,10 +191,12 @@ def _fetch_pdf_text(pdf_url: str) -> str | None:
         doc.close()
 
         full_text = "\n".join(text_parts).strip()
-        return full_text if len(full_text) > 100 else None
+        if len(full_text) > 100:
+            return full_text, pdf_path
+        return None, pdf_path
     except Exception as e:
         print(f"    PDF extraction failed: {e}")
-        return None
+        return None, None
 
 
 def _unpaywall_pdf_url(doi: str) -> str | None:
@@ -201,18 +218,23 @@ def _unpaywall_pdf_url(doi: str) -> str | None:
 def fetch_full_text(paper: dict) -> str | None:
     """Fetch full text for a paper. Tries direct PDF URL, then Unpaywall fallback.
 
+    Also sets paper["pdf_path"] if a PDF is successfully saved to disk.
+
     Args:
-        paper: Paper metadata dict.
+        paper: Paper metadata dict (modified in-place with pdf_path).
 
     Returns:
         Extracted text string, or None if unavailable.
     """
     title_short = paper["title"][:60]
+    paper_id = paper.get("paper_id", "")
 
     # Try direct PDF URL first
     if paper.get("pdf_url"):
         print(f"    Fetching PDF: {title_short}...")
-        text = _fetch_pdf_text(paper["pdf_url"])
+        text, pdf_path = _fetch_pdf_text(paper["pdf_url"], paper_id)
+        if pdf_path:
+            paper["pdf_path"] = pdf_path
         if text:
             return text
 
@@ -221,7 +243,9 @@ def fetch_full_text(paper: dict) -> str | None:
         print(f"    Trying Unpaywall for: {title_short}...")
         oa_url = _unpaywall_pdf_url(paper["doi"])
         if oa_url:
-            text = _fetch_pdf_text(oa_url)
+            text, pdf_path = _fetch_pdf_text(oa_url, paper_id)
+            if pdf_path:
+                paper["pdf_path"] = pdf_path
             if text:
                 return text
 
@@ -257,13 +281,23 @@ def _parse_qa_pairs(content: str, paper: dict) -> list[dict]:
                 output_text += f"<think>{think_text}</think>\n"
             output_text += f"<answer>{answer_text}</answer>"
 
-            pairs.append({
+            entry = {
                 "instruction": q_match.group(1).strip(),
                 "output": output_text,
                 "valid": True,
                 "source_paper": paper["paper_id"],
                 "source_title": paper["title"],
-            })
+                "authors": paper.get("authors", []),
+                "year": paper.get("year"),
+                "abstract": paper.get("abstract", ""),
+                "url": paper.get("url", ""),
+                "doi": paper.get("doi"),
+                "source": paper.get("source", ""),
+                "citation_count": paper.get("citation_count", 0),
+            }
+            if paper.get("pdf_path"):
+                entry["pdf_path"] = paper["pdf_path"]
+            pairs.append(entry)
 
     return pairs
 

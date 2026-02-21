@@ -1,9 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, CheckCircle, XCircle, StopCircle } from 'lucide-react'
-import { getProviders, cancelDataset, ProviderInfo } from '../api/client'
+import { ChevronDown, ChevronRight, CheckCircle, XCircle, StopCircle, Plus, Trash2, Layers } from 'lucide-react'
+import { getProviders, cancelDataset, createBatchDatasets, ProviderInfo } from '../api/client'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
+
+interface BatchRow {
+  id: number
+  topic: string
+  targetSize: number
+}
+
+let nextRowId = 1
 
 export default function CreateDataset() {
   const [topic, setTopic] = useState('')
@@ -18,6 +26,13 @@ export default function CreateDataset() {
   const [datasetId, setDatasetId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const logViewerRef = useRef<HTMLDivElement>(null)
+
+  // Batch mode state
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([
+    { id: nextRowId++, topic: '', targetSize: 100 },
+    { id: nextRowId++, topic: '', targetSize: 100 },
+  ])
 
   const { createDataset } = useDatasetStore()
   const { logs, status, done } = useSSE(datasetId)
@@ -62,69 +77,240 @@ export default function CreateDataset() {
     }
   }
 
+  const handleBatchGenerate = async () => {
+    const validRows = batchRows.filter((r) => r.topic.trim())
+    if (validRows.length === 0) return
+    setError('')
+    setGenerating(true)
+
+    try {
+      await createBatchDatasets(
+        validRows.map((r) => ({
+          topic: r.topic.trim(),
+          provider: provider || undefined,
+          model: model || undefined,
+          target_size: r.targetSize,
+          system_prompt: systemPrompt || undefined,
+          temperature,
+        }))
+      )
+      navigate('/datasets')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create batch datasets')
+      setGenerating(false)
+    }
+  }
+
+  const updateBatchRow = (id: number, field: keyof Omit<BatchRow, 'id'>, value: string | number) => {
+    setBatchRows((rows) =>
+      rows.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    )
+  }
+
+  const addBatchRow = () => {
+    setBatchRows((rows) => [...rows, { id: nextRowId++, topic: '', targetSize: 100 }])
+  }
+
+  const removeBatchRow = (id: number) => {
+    setBatchRows((rows) => rows.length > 1 ? rows.filter((r) => r.id !== id) : rows)
+  }
+
+  const validBatchCount = batchRows.filter((r) => r.topic.trim()).length
+
   return (
     <div style={{ maxWidth: '700px' }}>
       <div className="page-header">
-        <h1>Create Dataset</h1>
-        <p>Generate a synthetic Q&A dataset from academic papers</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h1>Create Dataset</h1>
+            <p>Generate a synthetic Q&A dataset from academic papers</p>
+          </div>
+          <button
+            onClick={() => setBatchMode(!batchMode)}
+            disabled={generating}
+            style={{
+              background: batchMode ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+              border: '1px solid ' + (batchMode ? 'var(--accent-blue)' : 'var(--border-primary)'),
+              color: batchMode ? '#fff' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-sm)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <Layers size={14} />
+            Batch Mode
+          </button>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: '20px' }}>
-        {/* Topic */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
-            What should this dataset be about?
-          </label>
-          <input
-            type="text"
-            placeholder='e.g. "quantum computing error correction"'
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            disabled={generating}
-            autoFocus
-            style={{ fontSize: '15px', padding: '12px 16px' }}
-          />
-        </div>
-
-        {/* Target size, Provider, Model */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
-          <div>
-            <label>Target Size</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="number"
-                value={targetSize}
-                onChange={(e) => setTargetSize(Math.max(10, parseInt(e.target.value) || 10))}
-                min={10}
-                disabled={generating}
-                style={{ width: '100px' }}
-              />
-              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>pairs</span>
-            </div>
-          </div>
-          <div>
-            <label>Provider</label>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              disabled={generating}
-            >
-              {providers.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>Model</label>
+        {/* Single mode: Topic */}
+        {!batchMode && (
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
+              What should this dataset be about?
+            </label>
             <input
               type="text"
-              placeholder={selectedProvider?.default_model || '(default)'}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+              placeholder='e.g. "quantum computing error correction"'
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
               disabled={generating}
+              autoFocus
+              style={{ fontSize: '15px', padding: '12px 16px' }}
             />
           </div>
-        </div>
+        )}
+
+        {/* Batch mode: Dataset rows */}
+        {batchMode && (
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '12px', display: 'block' }}>
+              Datasets to generate
+            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {batchRows.map((row, idx) => (
+                <div key={row.id} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', width: '20px', textAlign: 'right', flexShrink: 0 }}>
+                    {idx + 1}.
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Topic (e.g. drug discovery for cancer research)"
+                    value={row.topic}
+                    onChange={(e) => updateBatchRow(row.id, 'topic', e.target.value)}
+                    disabled={generating}
+                    style={{ flex: 1, fontSize: '14px', padding: '8px 12px' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                    <input
+                      type="number"
+                      value={row.targetSize}
+                      onChange={(e) => updateBatchRow(row.id, 'targetSize', Math.max(10, parseInt(e.target.value) || 10))}
+                      min={10}
+                      disabled={generating}
+                      style={{ width: '80px', fontSize: '14px', padding: '8px', textAlign: 'right' }}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>pairs</span>
+                  </div>
+                  <button
+                    onClick={() => removeBatchRow(row.id)}
+                    disabled={generating || batchRows.length <= 1}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: batchRows.length <= 1 ? 'var(--text-muted)' : 'var(--accent-pink)',
+                      cursor: batchRows.length <= 1 ? 'default' : 'pointer',
+                      padding: '4px',
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={addBatchRow}
+              disabled={generating}
+              style={{
+                background: 'none',
+                border: '1px dashed var(--border-primary)',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                padding: '8px',
+                borderRadius: 'var(--radius-sm)',
+                width: '100%',
+                marginTop: '8px',
+              }}
+            >
+              <Plus size={14} />
+              Add Dataset
+            </button>
+          </div>
+        )}
+
+        {/* Single mode: Target size, Provider, Model */}
+        {!batchMode && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+            <div>
+              <label>Target Size</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="number"
+                  value={targetSize}
+                  onChange={(e) => setTargetSize(Math.max(10, parseInt(e.target.value) || 10))}
+                  min={10}
+                  disabled={generating}
+                  style={{ width: '100px' }}
+                />
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>pairs</span>
+              </div>
+            </div>
+            <div>
+              <label>Provider</label>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                disabled={generating}
+              >
+                {providers.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Model</label>
+              <input
+                type="text"
+                placeholder={selectedProvider?.default_model || '(default)'}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={generating}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Batch mode: Shared Provider/Model */}
+        {batchMode && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+            <div>
+              <label>Provider (shared)</label>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                disabled={generating}
+              >
+                {providers.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Model (shared)</label>
+              <input
+                type="text"
+                placeholder={selectedProvider?.default_model || '(default)'}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={generating}
+              />
+            </div>
+          </div>
+        )}
 
         {/* API Key status */}
         {provider && (
@@ -222,18 +408,29 @@ export default function CreateDataset() {
         )}
 
         {/* Generate button */}
-        <button
-          className="btn btn-primary"
-          onClick={handleGenerate}
-          disabled={generating || !topic.trim()}
-          style={{ width: '100%', justifyContent: 'center', padding: '10px 20px', fontSize: '15px' }}
-        >
-          {generating ? <span className="spinner" /> : 'Generate Dataset'}
-        </button>
+        {!batchMode ? (
+          <button
+            className="btn btn-primary"
+            onClick={handleGenerate}
+            disabled={generating || !topic.trim()}
+            style={{ width: '100%', justifyContent: 'center', padding: '10px 20px', fontSize: '15px' }}
+          >
+            {generating ? <span className="spinner" /> : 'Generate Dataset'}
+          </button>
+        ) : (
+          <button
+            className="btn btn-primary"
+            onClick={handleBatchGenerate}
+            disabled={generating || validBatchCount === 0}
+            style={{ width: '100%', justifyContent: 'center', padding: '10px 20px', fontSize: '15px' }}
+          >
+            {generating ? <span className="spinner" /> : `Generate All (${validBatchCount} dataset${validBatchCount !== 1 ? 's' : ''})`}
+          </button>
+        )}
       </div>
 
-      {/* Progress log */}
-      {datasetId && (
+      {/* Progress log (single mode only) */}
+      {datasetId && !batchMode && (
         <div className="card">
           <div style={{
             display: 'flex',

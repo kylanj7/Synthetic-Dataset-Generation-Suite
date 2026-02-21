@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   getDatasets, getDataset, getDatasetSamples, createDataset,
+  deleteDataset as deleteDatasetApi,
   Dataset, QAPair, CreateDatasetRequest,
 } from '../api/client'
 
@@ -18,6 +19,7 @@ interface DatasetStore {
   fetchDatasets: (page?: number) => Promise<void>
   fetchDataset: (id: number) => Promise<void>
   createDataset: (data: CreateDatasetRequest) => Promise<Dataset>
+  deleteDataset: (id: number) => Promise<void>
   fetchSamples: (id: number, page?: number, search?: string) => Promise<void>
   updateDataset: (dataset: Dataset) => void
 }
@@ -66,6 +68,14 @@ export const useDatasetStore = create<DatasetStore>((set) => ({
       set({ error: String(e), loading: false })
       throw e
     }
+  },
+
+  deleteDataset: async (id: number) => {
+    await deleteDatasetApi(id)
+    set((state) => ({
+      datasets: state.datasets.filter((d) => d.id !== id),
+      total: state.total - 1,
+    }))
   },
 
   fetchSamples: async (id: number, page = 1, search?: string) => {

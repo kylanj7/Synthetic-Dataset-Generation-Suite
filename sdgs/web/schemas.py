@@ -40,6 +40,10 @@ class CreateDatasetRequest(BaseModel):
     temperature: float = 0.7
 
 
+class BatchCreateRequest(BaseModel):
+    datasets: list[CreateDatasetRequest]
+
+
 class DatasetResponse(BaseModel):
     id: int
     name: str
@@ -90,6 +94,34 @@ class QAPairResponse(BaseModel):
 
 class DatasetSamplesResponse(BaseModel):
     samples: list[QAPairResponse]
+    total: int
+    page: int
+    per_page: int
+
+
+# --- Paper schemas ---
+
+class PaperResponse(BaseModel):
+    id: int
+    paper_id: str | None = None
+    title: str
+    authors: list[str] = []
+    abstract: str | None = None
+    year: int | None = None
+    doi: str | None = None
+    url: str | None = None
+    source: str | None = None
+    citation_count: int = 0
+    qa_pair_count: int = 0
+    pdf_path: str | None = None
+    dataset_id: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class PaperListResponse(BaseModel):
+    papers: list[PaperResponse]
     total: int
     page: int
     per_page: int

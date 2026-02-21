@@ -6,6 +6,7 @@ import Register from './pages/Register'
 import Datasets from './pages/Datasets'
 import CreateDataset from './pages/CreateDataset'
 import DatasetDetail from './pages/DatasetDetail'
+import Papers from './pages/Papers'
 import Galaxy from './pages/Galaxy'
 import Settings from './pages/Settings'
 
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/" element={<Datasets />} />
             <Route path="/create" element={<CreateDataset />} />
             <Route path="/datasets/:id" element={<DatasetDetail />} />
+            <Route path="/papers" element={<Papers />} />
             <Route path="/galaxy" element={<Galaxy />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

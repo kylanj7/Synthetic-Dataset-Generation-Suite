@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Search, Upload, StopCircle } from 'lucide-react'
+import { Search, Upload, StopCircle, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useDatasetStore } from '../store/datasetStore'
 import { useSSE } from '../hooks/useSSE'
 import { getDataset, cancelDataset } from '../api/client'
@@ -18,13 +19,15 @@ const statusClass: Record<string, string> = {
 export default function DatasetDetail() {
   const { id } = useParams<{ id: string }>()
   const datasetId = parseInt(id || '0')
+  const navigate = useNavigate()
   const {
     currentDataset, samples, samplesTotal, samplesPage,
-    loading, fetchDataset, fetchSamples, updateDataset,
+    loading, fetchDataset, fetchSamples, updateDataset, deleteDataset,
   } = useDatasetStore()
   const [search, setSearch] = useState('')
   const [showHFModal, setShowHFModal] = useState(false)
   const [expandedQA, setExpandedQA] = useState<number | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const logViewerRef = useRef<HTMLDivElement>(null)
 
   // SSE for running datasets
@@ -101,6 +104,39 @@ export default function DatasetDetail() {
               <Upload size={16} />
               Push to HuggingFace
             </button>
+          )}
+          {!isRunning && (
+            confirmDelete ? (
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: 'var(--accent-pink)' }}>Delete?</span>
+                <button
+                  className="btn btn-danger"
+                  style={{ padding: '4px 10px', fontSize: '12px' }}
+                  onClick={async () => {
+                    await deleteDataset(datasetId)
+                    navigate('/')
+                  }}
+                >
+                  Yes
+                </button>
+                <button
+                  className="btn"
+                  style={{ padding: '4px 10px', fontSize: '12px' }}
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <button
+                className="btn"
+                style={{ color: 'var(--accent-pink)' }}
+                onClick={() => setConfirmDelete(true)}
+                title="Delete dataset"
+              >
+                <Trash2 size={16} />
+              </button>
+            )
           )}
         </div>
       </div>

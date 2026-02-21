@@ -176,15 +176,20 @@ def parse_dataset_results(output_path: str, filtered_path: str) -> dict:
     for pair in pairs:
         source_id = pair.get("source_paper_id") or pair.get("source_paper", "")
         if source_id and source_id not in seen_papers:
-            seen_papers[source_id] = {
+            paper_info = {
                 "paper_id": source_id,
                 "title": pair.get("source_title", "Unknown"),
                 "authors": pair.get("authors", []),
                 "abstract": pair.get("abstract", ""),
                 "year": pair.get("year"),
+                "doi": pair.get("doi"),
                 "url": pair.get("url", ""),
+                "source": pair.get("source", ""),
                 "citation_count": pair.get("citation_count", 0),
             }
+            if pair.get("pdf_path"):
+                paper_info["pdf_path"] = pair["pdf_path"]
+            seen_papers[source_id] = paper_info
 
         # Extract think/answer from output
         output_text = pair.get("output", "")

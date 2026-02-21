@@ -11,7 +11,7 @@ from ..db.database import get_db
 from ..db.models import Dataset, ApiKey, QAPair, User
 from ..deps import CurrentUser, get_current_user
 from ..schemas import (
-    CreateDatasetRequest, DatasetResponse, DatasetListResponse,
+    CreateDatasetRequest, BatchCreateRequest, DatasetResponse, DatasetListResponse,
     DatasetSamplesResponse, QAPairResponse,
     HFPushRequest, HFPushResponse,
 )
@@ -110,6 +110,63 @@ def create_dataset(
     return DatasetResponse.model_validate(ds)
 
 
+@router.post("/batch", response_model=list[DatasetResponse])
+def create_batch_datasets(
+    req: BatchCreateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    results = []
+    for item in req.datasets:
+        safe_topic = re.sub(r'[^a-zA-Z0-9_ -]', '', item.topic)[:80]
+        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        name = f"{safe_topic}_{ts}"
+
+        ds = Dataset(
+            user_id=current_user.id,
+            name=name,
+            topic=item.topic,
+            status="pending",
+            provider=item.provider,
+            model=item.model,
+            target_size=item.target_size,
+            system_prompt=item.system_prompt,
+            temperature=item.temperature,
+        )
+        db.add(ds)
+        db.commit()
+        db.refresh(ds)
+
+        api_key = _resolve_api_key(item.provider, current_user, db)
+
+        s2_api_key = None
+        if current_user.encryption_key:
+            user = db.query(User).filter(User.id == current_user.id).first()
+            if user and user.s2_token:
+                try:
+                    s2_api_key = decrypt_value(user.s2_token, current_user.encryption_key)
+                except Exception:
+                    pass
+        if not s2_api_key:
+            s2_api_key = os.environ.get("S2_API_KEY")
+
+        pipeline_kwargs = dict(
+            dataset_id=ds.id,
+            topic=item.topic,
+            provider=item.provider,
+            model=item.model,
+            api_key=api_key,
+            target_size=item.target_size,
+            system_prompt=item.system_prompt,
+            temperature=item.temperature,
+            s2_api_key=s2_api_key,
+        )
+        submit_job(ds.id, run_dataset_pipeline, **pipeline_kwargs)
+        results.append(DatasetResponse.model_validate(ds))
+
+    return results
+
+
 @router.get("", response_model=DatasetListResponse)
 def list_datasets(
     page: int = Query(1, ge=1),
@@ -172,6 +229,27 @@ def cancel_dataset(
     ds.completed_at = datetime.datetime.utcnow()
     db.commit()
     return {"status": "cancelled"}
+
+
+@router.delete("/{dataset_id}")
+def delete_dataset(
+    dataset_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ds = db.query(Dataset).filter(
+        Dataset.id == dataset_id,
+        Dataset.user_id == current_user.id,
+    ).first()
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+
+    if ds.status in ("pending", "running"):
+        cancel_job(dataset_id)
+
+    db.delete(ds)
+    db.commit()
+    return {"status": "deleted"}
 
 
 @router.get("/{dataset_id}/samples", response_model=DatasetSamplesResponse)
