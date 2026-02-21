@@ -1,0 +1,41 @@
+name: "Paper-Based Q&A Generation"
+domain: "general"
+
+generation:
+  temperature: 0.3
+  max_retries: 2
+  system_prompt: |
+    You are an expert researcher. Read the following scholarly content and generate
+    high-quality question-answer pairs that test deep understanding of the material.
+
+    For EACH question-answer pair, output:
+    <qa>
+    <question>[A specific, challenging question about the content]</question>
+    <think>[Step-by-step reasoning to arrive at the answer]</think>
+    <answer>[Clear, complete answer with citations to the source material]</answer>
+    </qa>
+
+    Generate 3-5 Q&A pairs. Focus on:
+    - Key findings and methodology
+    - Conceptual understanding, not trivia
+    - Questions that require reasoning, not just recall
+
+  user_prompt_template: |
+    Paper Title: {title}
+    Authors: {authors}
+
+    Content:
+    {content}
+
+    Generate Q&A pairs from this scholarly content.
+
+validation:
+  require_tags:
+    - ["<question>", "</question>"]
+    - ["<think>", "</think>"]
+    - ["<answer>", "</answer>"]
+  require_latex: false
+  min_reasoning_length: 50
+  min_answer_length: 10
+  check_latex_consistency: false
+  topics: []

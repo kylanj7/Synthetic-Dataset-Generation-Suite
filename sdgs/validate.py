@@ -27,7 +27,7 @@ LATEX_OPERATORS = re.compile(
     r"partial|frac|sqrt|sum|prod|int|ket|bra|langle|rangle)"
 )
 
-PLAIN_TEXT_PHYSICS = [
+DEFAULT_PLAIN_TEXT_PATTERNS = [
     r"\bsigma_[xyz]\b",
     r"\bpsi\b(?![_^\\])",
     r"\bH\s*=\s*[^$\\]",
@@ -149,14 +149,26 @@ def strip_math_environments(text: str) -> str:
     return text
 
 
-def validate_latex(output: str) -> tuple[bool, list[str]]:
-    """Check for LaTeX consistency."""
+def validate_latex(
+    output: str,
+    plain_text_patterns: list[str] | None = None,
+) -> tuple[bool, list[str]]:
+    """Check for LaTeX consistency.
+
+    Args:
+        output: The generated text.
+        plain_text_patterns: Optional list of regex patterns for domain-specific
+            plain-text checks. If None, skip domain-specific plain-text validation.
+            Pass DEFAULT_PLAIN_TEXT_PATTERNS explicitly for physics domains.
+    """
     issues = []
 
-    text_outside_math = strip_math_environments(output)
-    for pattern in PLAIN_TEXT_PHYSICS:
-        if re.search(pattern, text_outside_math):
-            issues.append(f"Plain text physics found (should be LaTeX): {pattern}")
+    # Domain-specific plain-text checks (only if patterns provided)
+    if plain_text_patterns:
+        text_outside_math = strip_math_environments(output)
+        for pattern in plain_text_patterns:
+            if re.search(pattern, text_outside_math):
+                issues.append(f"Plain text found (should be LaTeX): {pattern}")
 
     has_latex = bool(
         LATEX_INLINE.search(output)
@@ -164,7 +176,7 @@ def validate_latex(output: str) -> tuple[bool, list[str]]:
         or LATEX_OPERATORS.search(output)
     )
     if not has_latex:
-        issues.append("No LaTeX math detected - physics response should contain LaTeX")
+        issues.append("No LaTeX math detected - response should contain LaTeX")
 
     dollar_count = output.count("$") - output.count("\\$")
     if dollar_count % 2 != 0:

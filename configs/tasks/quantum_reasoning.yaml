@@ -64,6 +64,22 @@ validation:
   min_answer_length: 10
   # Domain-specific checks for the filter
   check_latex_consistency: true
+  plain_text_patterns:
+    - "\\bsigma_[xyz]\\b"
+    - "\\bpsi\\b(?![_^\\\\])"
+    - "\\bH\\s*=\\s*[^$\\\\]"
+    - "\\bhbar\\b(?!\\\\)"
+  # Domain checks for test mode validation
+  domain_checks:
+    - name: "Hilbert space"
+      pattern: "hilbert|dimension|\\\\mathbb\\{C\\}|\\$\\\\mathcal\\{H\\}"
+    - name: "Hamiltonian"
+      pattern: "hamiltonian|\\\\hat\\{H\\}|\\$H\\s*="
+    - name: "Normalization"
+      pattern: "normali[zs]|unitar|\\\\langle.*\\\\rangle\\s*=\\s*1"
+    - name: "Sanity check"
+      pattern: "sanity|check|verify|limit|recover|consistent"
+  min_domain_score: 2
   topics:
     - "qubit"
     - "entangle"

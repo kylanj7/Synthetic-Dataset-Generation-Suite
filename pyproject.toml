@@ -8,10 +8,18 @@ dependencies = [
     "pyyaml",
     "click",
     "datasets",
+    "arxiv",
+    "semanticscholar",
+    "pymupdf",
+    "requests",
 ]
 
 [project.optional-dependencies]
+gpu = ["pynvml"]
 dev = ["pytest", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["sdgs*"]
 
 [project.scripts]
 sdgs = "sdgs.cli:cli"

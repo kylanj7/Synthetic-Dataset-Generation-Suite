@@ -124,6 +124,36 @@ def qa(dataset, samples, use_random, stats_only, offset, task):
 
 
 @cli.command()
+@click.option("--topic", required=True, help="Research topic to search for")
+@click.option("--provider", default=None, help="LLM provider for Q&A generation")
+@click.option("--model", default=None, help="Override default model")
+@click.option("--api-key", default=None, help="API key (overrides env var)")
+@click.option("--task", default="paper_qa", help="Task config for generation prompts")
+@click.option("--max-papers", default=20, help="Max papers to search for")
+@click.option("--top-n", default=5, help="Fetch full text for top N papers (rest use abstracts)")
+@click.option("--output", "-o", required=True, help="Output JSONL path")
+@click.option("--collect-only", is_flag=True, help="Only collect paper metadata, skip generation")
+def scrape(topic, provider, model, api_key, task, max_papers, top_n, output, collect_only):
+    """Search scholarly papers, extract content, and generate Q&A datasets."""
+    from .scrape import run_scrape
+
+    if not collect_only and not provider:
+        raise click.ClickException("--provider is required unless using --collect-only")
+
+    run_scrape(
+        topic=topic,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        task_name=task,
+        max_papers=max_papers,
+        top_n=top_n,
+        output_path=output,
+        collect_only=collect_only,
+    )
+
+
+@cli.command()
 def providers():
     """List available LLM providers."""
     from .providers import list_providers, load_provider_config

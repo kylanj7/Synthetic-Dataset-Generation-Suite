@@ -90,7 +90,8 @@ def filter_dataset(
                     critical_fail = True
 
             if check_latex:
-                latex_ok, latex_issues = validate_latex(output)
+                plain_text_patterns = validation_rules.get("plain_text_patterns")
+                latex_ok, latex_issues = validate_latex(output, plain_text_patterns)
                 if not latex_ok:
                     stats["failed_latex"] += 1
                     all_issues.extend(latex_issues)

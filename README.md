@@ -17,9 +17,43 @@ Multi-provider pipeline for generating synthetic reasoning datasets for LLM fine
 ```bash
 cd Synthetic-Dataset-Generation-Suite
 pip install -e .
+
+# With GPU power tracking (optional)
+pip install -e ".[gpu]"
 ```
 
-## Quick Start
+## Quick Start: Paper-Based Pipeline
+
+Generate Q&A datasets directly from scholarly papers — no pre-existing dataset needed.
+
+```bash
+# Search for papers, read them, generate Q&A — all in one pipeline
+sdgs scrape --topic "reinforcement learning" --provider openai --model gpt-4o --max-papers 20 --top-n 5 -o data/rl_dataset.jsonl
+
+# Just collect paper metadata + abstracts (no generation)
+sdgs scrape --topic "protein folding" --max-papers 50 --collect-only -o data/protein_papers.json
+
+# Use with local Ollama
+sdgs scrape --topic "transformer attention mechanisms" --provider ollama --model qwen3:32b --max-papers 10 --top-n 3 -o data/attention.jsonl
+
+# Filter and inspect results
+sdgs filter data/rl_dataset.jsonl
+sdgs qa data/rl_dataset_filtered.jsonl --stats
+```
+
+**How it works:**
+```
+Search APIs (Semantic Scholar + arXiv)
+  → Rank by relevance/citations
+  → Top N: fetch full text in memory (PDF → extract → discard)
+  → Rest: use abstracts
+  → LLM generates Q&A pairs from content
+  → Output: JSONL dataset + citations.json log
+```
+
+## Quick Start: Extract-Based Pipeline
+
+Generate datasets from existing Q&A sources (HuggingFace datasets, local files).
 
 ```bash
 # 1. Set your API key (skip for Ollama)
@@ -44,11 +78,13 @@ sdgs qa data/output_filtered.jsonl --task quantum_reasoning --stats
 ## Pipeline
 
 ```
-Extract → Test → Generate → Filter → QA
+Scrape: Search → Rank → Fetch → Generate → Filter → QA
+Extract: Extract → Test → Generate → Filter → QA
 ```
 
 | Stage | Command | Purpose |
 |-------|---------|---------|
+| **Scrape** | `sdgs scrape` | Search papers, fetch content, generate Q&A in one step |
 | **Extract** | `sdgs extract` | Pull Q&A data from HuggingFace or local files |
 | **Test** | `sdgs generate --test N` | Validate N samples before committing to full run |
 | **Generate** | `sdgs generate` | Generate reasoning datasets with any provider |
@@ -62,6 +98,9 @@ Extract → Test → Generate → Filter → QA
 sdgs providers
 sdgs tasks
 
+# Scrape papers and generate Q&A
+sdgs scrape --topic <query> --provider <name> -o <output.jsonl> [--model <model>] [--max-papers N] [--top-n N] [--task <name>] [--collect-only]
+
 # Extract data
 sdgs extract --task <name> --output <path> [--sample N]
 
@@ -74,6 +113,12 @@ sdgs filter <input.jsonl> [-o <output.jsonl>] [--lenient] [--no-heal] [--task <n
 # QA inspection
 sdgs qa <dataset.jsonl> [-n N] [-r] [-s] [--offset N] [--task <name>]
 ```
+
+## Tracking
+
+Both `generate` and `scrape` commands automatically track:
+- **Token usage** — prompt/completion/total tokens per run
+- **GPU power** — kWh consumed (requires `pip install -e ".[gpu]"` and NVIDIA GPU)
 
 ## Adding a New Provider
 
@@ -138,7 +183,9 @@ See `configs/tasks/example_task.yaml` for a complete template.
 ```
 sdgs/
   providers.py     # Provider registry + client factory
-  generate.py      # Core generation logic
+  generate.py      # Core generation logic + tracker integration
+  scrape.py        # Scholarly paper search + full-text extraction pipeline
+  tracker.py       # Token usage + GPU power tracking
   extract.py       # Data extraction (HF, JSON, JSONL)
   filter.py        # Post-processing filter + healer
   qa.py            # Dataset inspection + statistics

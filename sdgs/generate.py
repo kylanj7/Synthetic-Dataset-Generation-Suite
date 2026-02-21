@@ -6,6 +6,7 @@ from pathlib import Path
 
 import openai
 
+from .tracker import GPUTracker, TokenTracker
 from .validate import validate_output
 
 
@@ -27,6 +28,7 @@ def generate_single(
     temperature: float,
     validation_rules: dict,
     attempt: int = 1,
+    token_tracker: TokenTracker | None = None,
 ) -> tuple[str | None, bool]:
     """
     Generate a single reasoning response and validate it.
@@ -51,6 +53,9 @@ def generate_single(
 
         response = client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content
+
+        if token_tracker and hasattr(response, "usage"):
+            token_tracker.update(response.usage)
 
         is_valid, validation_msg = validate_output(content, validation_rules)
         if is_valid:
@@ -109,6 +114,10 @@ def run_generation(
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    token_tracker = TokenTracker()
+    gpu_tracker = GPUTracker()
+    gpu_tracker.start()
+
     stats = {"processed": 0, "valid": 0, "invalid_kept": 0, "skipped": 0, "total_retries": 0}
 
     with open(output_path, "a") as out_f:
@@ -128,6 +137,7 @@ def run_generation(
                 output, valid = generate_single(
                     client, model, extra_params, system_prompt, user_msg,
                     temperature, validation_rules, attempt,
+                    token_tracker=token_tracker,
                 )
                 if output:
                     best_output = output
@@ -162,7 +172,10 @@ def run_generation(
             if rate_delay > 0:
                 time.sleep(rate_delay)
 
+    gpu_tracker.stop()
     _print_summary(stats, output_path)
+    token_tracker.report()
+    gpu_tracker.report()
 
 
 def run_test(
@@ -186,10 +199,17 @@ def run_test(
     validation_rules = task_config.get("validation", {})
     rate_delay = extra_params.get("_rate_limit_delay", 0)
 
+    # Build domain checks from task config
+    domain_checks = _build_domain_checks(task_config)
+
     samples = input_data[:num_samples]
 
     print(f"Generating {len(samples)} test samples with {model}...")
     print("=" * 80)
+
+    token_tracker = TokenTracker()
+    gpu_tracker = GPUTracker()
+    gpu_tracker.start()
 
     results = []
     for i, entry in enumerate(samples):
@@ -206,6 +226,7 @@ def run_test(
         output, valid = generate_single(
             client, model, extra_params, system_prompt, user_msg,
             temperature, validation_rules,
+            token_tracker=token_tracker,
         )
         elapsed = time.time() - start
 
@@ -215,10 +236,10 @@ def run_test(
             print(output)
             print("-" * 40)
 
-            validation = _detailed_validation(output)
-            _print_detailed_validation(validation)
+            validation = _detailed_validation(output, domain_checks)
+            _print_detailed_validation(validation, domain_checks)
 
-            quality = _score_quality(validation)
+            quality = _score_quality(validation, domain_checks)
             print(f"\n  >>> {quality}")
 
             results.append({
@@ -237,11 +258,40 @@ def run_test(
         if rate_delay > 0:
             time.sleep(rate_delay)
 
-    _print_test_summary(results, len(samples))
+    gpu_tracker.stop()
+    _print_test_summary(results, len(samples), domain_checks)
+    token_tracker.report()
+    gpu_tracker.report()
 
 
-def _detailed_validation(content: str) -> dict:
-    """Comprehensive validation with first-principles checks."""
+def _build_domain_checks(task_config: dict) -> dict:
+    """Build domain check config from task YAML.
+
+    Looks for `validation.domain_checks` in the task config. Each check is a
+    dict with `name` and `pattern` (regex). If not present, returns empty checks.
+
+    Example task config:
+        validation:
+          domain_checks:
+            - name: "Hilbert space"
+              pattern: "hilbert|dimension|\\\\mathbb\\{C\\}"
+            - name: "Hamiltonian"
+              pattern: "hamiltonian|\\\\hat\\{H\\}"
+    """
+    validation = task_config.get("validation", {})
+    checks = validation.get("domain_checks", [])
+    require_latex = validation.get("require_latex", False)
+    min_domain_score = validation.get("min_domain_score", 0)
+    return {
+        "checks": checks,
+        "require_latex": require_latex,
+        "min_domain_score": min_domain_score,
+    }
+
+
+def _detailed_validation(content: str, domain_checks: dict | None = None) -> dict:
+    """Comprehensive validation with configurable domain checks."""
+    domain_checks = domain_checks or {"checks": [], "require_latex": False, "min_domain_score": 0}
     lower = content.lower()
     result = {
         "has_think_open": "<think>" in lower,
@@ -250,36 +300,46 @@ def _detailed_validation(content: str) -> dict:
         "has_answer_close": "</answer>" in lower,
         "has_latex": bool(re.search(r"\\[a-zA-Z]+|\\\[|\$", content)),
         "has_steps": bool(re.search(r"step\s*\d|step\s*[1-4]:", lower)),
-        "has_hilbert_space": bool(
-            re.search(r"hilbert|dimension|\\mathbb\{C\}|\$\\mathcal\{H\}", lower)
-        ),
-        "has_hamiltonian": bool(re.search(r"hamiltonian|\\hat\{H\}|\$H\s*=", content)),
-        "has_normalization": bool(
-            re.search(r"normali[zs]|unitar|\\langle.*\\rangle\s*=\s*1", lower)
-        ),
-        "has_sanity_check": bool(
-            re.search(r"sanity|check|verify|limit|recover|consistent", lower)
-        ),
     }
     result["all_tags_valid"] = all([
         result["has_think_open"], result["has_think_close"],
         result["has_answer_open"], result["has_answer_close"],
     ])
-    fp_keys = ["has_hilbert_space", "has_hamiltonian", "has_normalization", "has_sanity_check"]
-    result["first_principles_score"] = sum(1 for k in fp_keys if result[k])
+
+    # Domain-specific checks from task config
+    domain_results = {}
+    for check in domain_checks.get("checks", []):
+        name = check["name"]
+        pattern = check["pattern"]
+        domain_results[name] = bool(re.search(pattern, content, re.IGNORECASE))
+    result["domain_results"] = domain_results
+    result["domain_score"] = sum(1 for v in domain_results.values() if v)
+    result["domain_total"] = len(domain_results)
+
     return result
 
 
-def _score_quality(validation: dict) -> str:
-    if (validation["all_tags_valid"] and validation["has_latex"]
-            and validation["first_principles_score"] >= 2):
-        return "PASS"
-    elif validation["all_tags_valid"] and validation["has_latex"]:
-        return "MARGINAL"
-    return "FAIL"
+def _score_quality(validation: dict, domain_checks: dict | None = None) -> str:
+    """Score quality using configurable thresholds."""
+    domain_checks = domain_checks or {"checks": [], "require_latex": False, "min_domain_score": 0}
+    require_latex = domain_checks.get("require_latex", False)
+    min_domain = domain_checks.get("min_domain_score", 0)
+
+    if not validation["all_tags_valid"]:
+        return "FAIL"
+
+    if require_latex and not validation["has_latex"]:
+        return "FAIL"
+
+    if min_domain > 0 and validation["domain_score"] < min_domain:
+        if validation["all_tags_valid"] and (not require_latex or validation["has_latex"]):
+            return "MARGINAL"
+        return "FAIL"
+
+    return "PASS"
 
 
-def _print_detailed_validation(v: dict):
+def _print_detailed_validation(v: dict, domain_checks: dict | None = None):
     ok = lambda b: "Y" if b else "N"
     print(f"\nVALIDATION:")
     print(f"  Tags:          {ok(v['all_tags_valid'])} "
@@ -287,25 +347,33 @@ def _print_detailed_validation(v: dict):
           f"answer: {ok(v['has_answer_open'])}/{ok(v['has_answer_close'])})")
     print(f"  LaTeX:         {ok(v['has_latex'])}")
     print(f"  Step format:   {ok(v['has_steps'])}")
-    print(f"\n  FIRST PRINCIPLES ({v['first_principles_score']}/4):")
-    print(f"    Hilbert space: {ok(v['has_hilbert_space'])}")
-    print(f"    Hamiltonian:   {ok(v['has_hamiltonian'])}")
-    print(f"    Normalization: {ok(v['has_normalization'])}")
-    print(f"    Sanity check:  {ok(v['has_sanity_check'])}")
+
+    domain_results = v.get("domain_results", {})
+    if domain_results:
+        total = v.get("domain_total", len(domain_results))
+        score = v.get("domain_score", 0)
+        print(f"\n  DOMAIN CHECKS ({score}/{total}):")
+        for name, passed in domain_results.items():
+            print(f"    {name:20s} {ok(passed)}")
 
 
-def _print_test_summary(results: list, num_samples: int):
+def _print_test_summary(results: list, num_samples: int, domain_checks: dict | None = None):
     passed = sum(1 for r in results if r.get("quality") == "PASS")
     marginal = sum(1 for r in results if r.get("quality") == "MARGINAL")
     failed = sum(1 for r in results if r.get("quality") == "FAIL")
     errors = sum(1 for r in results if r.get("quality") == "ERROR")
     avg_time = sum(r["time"] for r in results) / len(results) if results else 0
 
-    fp_scores = [
-        r.get("validation", {}).get("first_principles_score", 0)
+    domain_scores = [
+        r.get("validation", {}).get("domain_score", 0)
         for r in results if r.get("validation")
     ]
-    avg_fp = sum(fp_scores) / len(fp_scores) if fp_scores else 0
+    domain_totals = [
+        r.get("validation", {}).get("domain_total", 0)
+        for r in results if r.get("validation")
+    ]
+    avg_domain = sum(domain_scores) / len(domain_scores) if domain_scores else 0
+    max_domain = max(domain_totals) if domain_totals else 0
 
     print(f"\n{'=' * 80}")
     print("QUALITY SUMMARY")
@@ -315,7 +383,8 @@ def _print_test_summary(results: list, num_samples: int):
     print(f"MARGINAL:            {marginal} ({100*marginal/num_samples:.0f}%)")
     print(f"FAIL:                {failed} ({100*failed/num_samples:.0f}%)")
     print(f"ERROR:               {errors}")
-    print(f"\nFirst Principles avg: {avg_fp:.1f}/4")
+    if max_domain > 0:
+        print(f"\nDomain checks avg:   {avg_domain:.1f}/{max_domain}")
     print(f"Avg time/sample:     {avg_time:.1f}s")
 
     usable = passed + marginal
