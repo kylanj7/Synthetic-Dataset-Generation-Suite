@@ -6,7 +6,11 @@ from ..auth import encrypt_value, decrypt_value
 from ..db.database import get_db
 from ..db.models import ApiKey, User
 from ..deps import CurrentUser, get_current_user
-from ..schemas import ApiKeyInfo, SaveApiKeyRequest, HFTokenStatus, SaveHFTokenRequest
+from ..schemas import (
+    ApiKeyInfo, SaveApiKeyRequest,
+    HFTokenStatus, SaveHFTokenRequest,
+    S2TokenStatus, SaveS2TokenRequest,
+)
 
 router = APIRouter()
 
@@ -122,5 +126,42 @@ def delete_hf_token(
 ):
     user = db.query(User).filter(User.id == current_user.id).first()
     user.hf_token = None
+    db.commit()
+    return {"status": "ok"}
+
+
+# --- Semantic Scholar API Key ---
+
+@router.get("/s2-token", response_model=S2TokenStatus)
+def get_s2_token_status(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    return S2TokenStatus(configured=bool(user and user.s2_token))
+
+
+@router.put("/s2-token")
+def save_s2_token(
+    req: SaveS2TokenRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user.encryption_key:
+        raise HTTPException(400, "Re-login required for key operations")
+
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.s2_token = encrypt_value(req.token, current_user.encryption_key)
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/s2-token")
+def delete_s2_token(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.s2_token = None
     db.commit()
     return {"status": "ok"}

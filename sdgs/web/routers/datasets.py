@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import decrypt_value
 from ..db.database import get_db
-from ..db.models import Dataset, ApiKey, QAPair
+from ..db.models import Dataset, ApiKey, QAPair, User
 from ..deps import CurrentUser, get_current_user
 from ..schemas import (
     CreateDatasetRequest, DatasetResponse, DatasetListResponse,
@@ -81,6 +81,18 @@ def create_dataset(
     # Resolve API key
     api_key = _resolve_api_key(req.provider, current_user, db)
 
+    # Resolve Semantic Scholar API key
+    s2_api_key = None
+    if current_user.encryption_key:
+        user = db.query(User).filter(User.id == current_user.id).first()
+        if user and user.s2_token:
+            try:
+                s2_api_key = decrypt_value(user.s2_token, current_user.encryption_key)
+            except Exception:
+                pass
+    if not s2_api_key:
+        s2_api_key = os.environ.get("S2_API_KEY")
+
     # Submit pipeline to background executor
     pipeline_kwargs = dict(
         dataset_id=ds.id,
@@ -91,6 +103,7 @@ def create_dataset(
         target_size=req.target_size,
         system_prompt=req.system_prompt,
         temperature=req.temperature,
+        s2_api_key=s2_api_key,
     )
     submit_job(ds.id, run_dataset_pipeline, **pipeline_kwargs)
 
@@ -148,9 +161,17 @@ def cancel_dataset(
     if not ds:
         raise HTTPException(404, "Dataset not found")
 
+    if ds.status not in ("pending", "running"):
+        raise HTTPException(400, "Dataset is not running")
+
     if cancel_job(dataset_id):
         return {"status": "cancelled"}
-    raise HTTPException(400, "Cannot cancel — dataset is not running or already completed")
+
+    # Job not in executor (stale/lost) — mark as cancelled directly
+    ds.status = "cancelled"
+    ds.completed_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"status": "cancelled"}
 
 
 @router.get("/{dataset_id}/samples", response_model=DatasetSamplesResponse)
@@ -233,6 +254,22 @@ def push_to_huggingface(
     except Exception:
         raise HTTPException(400, "Cannot decrypt HF token. Please re-login and try again.")
 
+    # Gather source papers for citations
+    from ..db.models import Paper
+    papers = db.query(Paper).filter(Paper.dataset_id == dataset_id).all()
+    sources = []
+    for p in papers:
+        sources.append({
+            "title": p.title,
+            "authors": p.authors or [],
+            "year": p.year,
+            "url": p.url or "",
+            "doi": p.doi or "",
+            "source": p.source or "",
+            "citation_count": p.citation_count or 0,
+            "qa_pair_count": p.qa_pair_count or 0,
+        })
+
     from ..services.hf_service import push_dataset_to_hf
     repo_url = push_dataset_to_hf(
         hf_token=hf_token,
@@ -245,6 +282,11 @@ def push_to_huggingface(
         model=ds.model,
         description=req.description,
         private=req.private,
+        total_tokens=ds.total_tokens or 0,
+        prompt_tokens=ds.prompt_tokens or 0,
+        completion_tokens=ds.completion_tokens or 0,
+        gpu_kwh=ds.gpu_kwh or 0.0,
+        sources=sources,
     )
 
     ds.hf_repo = req.repo_name

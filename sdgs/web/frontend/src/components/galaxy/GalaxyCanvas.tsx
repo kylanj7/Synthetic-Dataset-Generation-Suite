@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect, useState } from 'react'
-import ForceGraph2D from 'react-force-graph-2d'
+import ForceGraph3D from 'react-force-graph-3d'
+import * as THREE from 'three'
 
 interface Props {
   nodes: any[]
@@ -27,88 +28,188 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
     return () => window.removeEventListener('resize', updateSize)
   }, [])
 
-  // Custom node painter with cosmic glow effect
-  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+  // Auto-rotate
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg) return
+    const controls = fg.controls()
+    if (controls) {
+      controls.autoRotate = true
+      controls.autoRotateSpeed = 0.5
+    }
+  }, [nodes])
+
+  // Custom 3D node objects
+  const nodeThreeObject = useCallback((node: any) => {
+    const color = node.color || '#7eb8ff'
     const size = node.size || 4
     const isMatch = searchQuery && node._match
-    const alpha = searchQuery && !node._match ? 0.15 : 1
+    const dimmed = searchQuery && !node._match
 
-    ctx.save()
-    ctx.globalAlpha = alpha
+    const nodeColor = isMatch ? '#ffffff' : color
+    const opacity = dimmed ? 0.15 : 1
 
-    // Outer glow
-    const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, size * 2.5)
-    gradient.addColorStop(0, node.color + 'cc')
-    gradient.addColorStop(0.4, node.color + '44')
-    gradient.addColorStop(1, 'transparent')
-    ctx.fillStyle = gradient
-    ctx.beginPath()
-    ctx.arc(node.x, node.y, size * 2.5, 0, 2 * Math.PI)
-    ctx.fill()
+    if (node.type === 'dataset') {
+      // Icosahedron for datasets (gem-like)
+      const geometry = new THREE.IcosahedronGeometry(size, 1)
+      const material = new THREE.MeshPhongMaterial({
+        color: nodeColor,
+        transparent: true,
+        opacity,
+        emissive: nodeColor,
+        emissiveIntensity: 0.6,
+        shininess: 100,
+      })
+      const mesh = new THREE.Mesh(geometry, material)
 
-    // Core
-    ctx.fillStyle = isMatch ? '#ffffff' : node.color
-    ctx.beginPath()
-    ctx.arc(node.x, node.y, size, 0, 2 * Math.PI)
-    ctx.fill()
+      // Wireframe overlay
+      const wireGeo = new THREE.IcosahedronGeometry(size * 1.15, 1)
+      const wireMat = new THREE.MeshBasicMaterial({
+        color: '#ffffff',
+        wireframe: true,
+        transparent: true,
+        opacity: opacity * 0.25,
+      })
+      mesh.add(new THREE.Mesh(wireGeo, wireMat))
 
-    // Label (papers only, on zoom)
-    if (node.type === 'paper' && globalScale > 0.7) {
-      const label = node.label.length > 40 ? node.label.slice(0, 40) + '...' : node.label
-      const fontSize = Math.max(10 / globalScale, 3)
-      ctx.font = `${fontSize}px Inter, sans-serif`
-      ctx.fillStyle = 'rgba(232, 232, 240, 0.8)'
-      ctx.textAlign = 'center'
-      ctx.fillText(label, node.x, node.y + size + fontSize + 2)
+      // Glow sprite
+      const spriteMat = new THREE.SpriteMaterial({
+        map: createGlowTexture(color),
+        transparent: true,
+        opacity: opacity * 0.4,
+        blending: THREE.AdditiveBlending,
+      })
+      const sprite = new THREE.Sprite(spriteMat)
+      sprite.scale.set(size * 6, size * 6, 1)
+      mesh.add(sprite)
+
+      return mesh
     }
 
-    ctx.restore()
+    if (node.type === 'paper') {
+      // Sphere for papers
+      const geometry = new THREE.SphereGeometry(size, 16, 12)
+      const material = new THREE.MeshPhongMaterial({
+        color: nodeColor,
+        transparent: true,
+        opacity,
+        emissive: nodeColor,
+        emissiveIntensity: 0.3,
+      })
+      const mesh = new THREE.Mesh(geometry, material)
+
+      // Glow sprite
+      const spriteMat = new THREE.SpriteMaterial({
+        map: createGlowTexture(color),
+        transparent: true,
+        opacity: opacity * 0.3,
+        blending: THREE.AdditiveBlending,
+      })
+      const sprite = new THREE.Sprite(spriteMat)
+      sprite.scale.set(size * 5, size * 5, 1)
+      mesh.add(sprite)
+
+      return mesh
+    }
+
+    // QA nodes: small octahedron
+    const geometry = new THREE.OctahedronGeometry(size, 0)
+    const material = new THREE.MeshPhongMaterial({
+      color: nodeColor,
+      transparent: true,
+      opacity,
+      emissive: nodeColor,
+      emissiveIntensity: 0.2,
+    })
+    return new THREE.Mesh(geometry, material)
   }, [searchQuery])
 
   // Tooltip
-  const getNodeTooltip = useCallback((node: any) => {
-    if (node.type === 'paper') {
-      return `${node.label}\nYear: ${node.year || 'N/A'} | Citations: ${node.citation_count || 0}`
+  const getNodeLabel = useCallback((node: any) => {
+    if (node.type === 'dataset') {
+      return `<div style="background:rgba(10,10,30,0.9);padding:8px 12px;border-radius:6px;border:1px solid rgba(126,184,255,0.3);max-width:300px">
+        <div style="color:#7eb8ff;font-weight:600;margin-bottom:4px">Dataset</div>
+        <div style="color:#e8e8f0">${node.label}</div>
+        <div style="color:#888;font-size:12px;margin-top:4px">${node.abstract || ''}</div>
+      </div>`
     }
-    return node.instruction?.slice(0, 100) || node.label
+    if (node.type === 'paper') {
+      return `<div style="background:rgba(10,10,30,0.9);padding:8px 12px;border-radius:6px;border:1px solid rgba(126,184,255,0.3);max-width:300px">
+        <div style="color:#6ee7d8;font-weight:600;margin-bottom:4px">Paper</div>
+        <div style="color:#e8e8f0">${node.label}</div>
+        <div style="color:#888;font-size:12px;margin-top:4px">Year: ${node.year || 'N/A'} | Citations: ${node.citation_count || 0}</div>
+      </div>`
+    }
+    return `<div style="background:rgba(10,10,30,0.9);padding:6px 10px;border-radius:4px;border:1px solid rgba(110,231,216,0.3);max-width:280px">
+      <div style="color:#ffd666;font-size:12px;margin-bottom:2px">Q&A</div>
+      <div style="color:#e8e8f0;font-size:13px">${(node.instruction || node.label || '').slice(0, 120)}</div>
+    </div>`
   }, [])
 
   return (
-    <div ref={containerRef} style={{
-      width: '100%', height: '100%',
-      background: 'radial-gradient(ellipse at center, #0a0a1a 0%, #06060f 100%)',
-    }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#06060f' }}>
       {nodes.length === 0 ? (
         <div className="empty-state" style={{ paddingTop: '200px' }}>
           <h3>No data in Galaxy</h3>
-          <p>Run a scrape job to populate the Galaxy viewer</p>
+          <p>Generate a dataset to populate the Galaxy viewer</p>
         </div>
       ) : (
-        <ForceGraph2D
+        <ForceGraph3D
           ref={fgRef}
           width={dimensions.width}
           height={dimensions.height}
           graphData={{ nodes, links }}
-          nodeCanvasObject={paintNode}
-          nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-            ctx.fillStyle = color
-            ctx.beginPath()
-            ctx.arc(node.x, node.y, (node.size || 4) * 2, 0, 2 * Math.PI)
-            ctx.fill()
+          nodeThreeObject={nodeThreeObject}
+          nodeThreeObjectExtend={false}
+          linkColor={(link: any) => {
+            if (link.type === 'dataset_paper') return 'rgba(126, 184, 255, 0.2)'
+            if (link.type === 'paper_qa' || link.type === 'dataset_qa') return 'rgba(110, 231, 216, 0.15)'
+            if (link.type === 'keyword') return 'rgba(255, 214, 102, 0.12)'
+            return 'rgba(126, 184, 255, 0.08)'
           }}
-          linkColor={() => 'rgba(126, 184, 255, 0.08)'}
-          linkWidth={(link: any) => link.weight * 2}
-          linkDirectionalParticles={(link: any) => link.type === 'paper_qa' ? 2 : 0}
+          linkWidth={(link: any) => link.weight * 1.5}
+          linkOpacity={0.6}
+          linkDirectionalParticles={(link: any) =>
+            ['paper_qa', 'dataset_paper', 'dataset_qa'].includes(link.type) ? 2 : 0
+          }
           linkDirectionalParticleWidth={1.5}
-          linkDirectionalParticleColor={() => 'rgba(110, 231, 216, 0.6)'}
+          linkDirectionalParticleColor={(link: any) => {
+            if (link.type === 'dataset_paper') return '#7eb8ff'
+            return '#6ee7d8'
+          }}
           onNodeClick={onNodeClick}
-          nodeLabel={getNodeTooltip}
+          nodeLabel={getNodeLabel}
           d3AlphaDecay={0.02}
           d3VelocityDecay={0.3}
           cooldownTicks={100}
-          backgroundColor="transparent"
+          backgroundColor="#06060f"
+          showNavInfo={false}
         />
       )}
     </div>
   )
+}
+
+// Generate a radial glow texture for sprites
+const glowTextureCache = new Map<string, THREE.Texture>()
+
+function createGlowTexture(color: string): THREE.Texture {
+  if (glowTextureCache.has(color)) return glowTextureCache.get(color)!
+
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
+  gradient.addColorStop(0, color)
+  gradient.addColorStop(0.4, 'rgba(126, 184, 255, 0.15)')
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  glowTextureCache.set(color, texture)
+  return texture
 }

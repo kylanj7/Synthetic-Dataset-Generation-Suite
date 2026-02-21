@@ -199,6 +199,22 @@ export const saveHFToken = (token: string) =>
 export const deleteHFToken = () =>
   request<{ status: string }>('/settings/hf-token', { method: 'DELETE' })
 
+// Settings - Semantic Scholar API Key
+export interface S2TokenStatus {
+  configured: boolean
+}
+
+export const getS2TokenStatus = () => request<S2TokenStatus>('/settings/s2-token')
+
+export const saveS2Token = (token: string) =>
+  request<{ status: string }>('/settings/s2-token', {
+    method: 'PUT',
+    body: JSON.stringify({ token }),
+  })
+
+export const deleteS2Token = () =>
+  request<{ status: string }>('/settings/s2-token', { method: 'DELETE' })
+
 // Galaxy
 export interface GalaxyNode {
   id: string

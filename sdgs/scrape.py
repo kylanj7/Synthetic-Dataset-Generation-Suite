@@ -1,6 +1,7 @@
 """Scholarly paper search, full-text extraction, and Q&A generation pipeline."""
 import io
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -72,7 +73,11 @@ def _search_semantic_scholar(topic: str, max_results: int) -> list[dict]:
             "limit": min(max_results, 100),
             "fields": "paperId,title,authors,abstract,year,externalIds,url,citationCount,isOpenAccess,openAccessPdf",
         }
-        resp = requests.get(url, params=params, timeout=30)
+        headers = {}
+        s2_key = os.environ.get("S2_API_KEY")
+        if s2_key:
+            headers["x-api-key"] = s2_key
+        resp = requests.get(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
@@ -379,8 +384,7 @@ def run_scrape(
     papers = search_papers(topic, max_results=max_papers)
 
     if not papers:
-        print("No papers found. Try a different topic.")
-        return
+        raise RuntimeError(f"No papers found for topic '{topic}'. APIs may be rate-limited — check arXiv and Semantic Scholar access.")
 
     # ── Collect-only mode ──
     if collect_only:
@@ -419,8 +423,7 @@ def run_scrape(
     print(f"Papers with usable content: {len(papers_with_content)}")
 
     if not papers_with_content:
-        print("No papers with extractable content. Aborting.")
-        return
+        raise RuntimeError("No papers with extractable content (no abstracts or full text available).")
 
     # ── Step 3: Setup LLM client ──
     from .providers import get_client

@@ -16,6 +16,7 @@ from ..db.models import Dataset
 _executor = ThreadPoolExecutor(max_workers=2)
 _job_queues: dict[int, queue.Queue] = {}
 _job_futures: dict[int, object] = {}
+_cancel_flags: dict[int, threading.Event] = {}
 _lock = threading.Lock()
 
 
@@ -131,6 +132,7 @@ def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
             parsed = parse_dataset_results(output_path, filtered_path)
 
             ds.output_path = filtered_path or output_path
+            ds.citations_path = result.get("citations_path", "")
             ds.actual_size = parsed["actual_size"]
             ds.valid_count = parsed["valid_count"]
             ds.invalid_count = parsed["invalid_count"]

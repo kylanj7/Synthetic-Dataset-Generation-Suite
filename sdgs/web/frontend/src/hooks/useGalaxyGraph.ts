@@ -25,12 +25,12 @@ export function useGalaxyGraph() {
 
     // Filter QA visibility
     if (!showQA) {
-      const paperIds = new Set(nodes.filter(n => n.type === 'paper').map(n => n.id))
-      nodes = nodes.filter(n => n.type === 'paper')
+      const keepIds = new Set(nodes.filter(n => n.type === 'paper' || n.type === 'dataset').map(n => n.id))
+      nodes = nodes.filter(n => n.type !== 'qa')
       links = links.filter(l => {
         const src = typeof l.source === 'string' ? l.source : (l.source as any).id
         const tgt = typeof l.target === 'string' ? l.target : (l.target as any).id
-        return paperIds.has(src) && paperIds.has(tgt)
+        return keepIds.has(src) && keepIds.has(tgt)
       })
     }
 

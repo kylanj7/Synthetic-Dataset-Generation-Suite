@@ -8,7 +8,7 @@ import { useSSE } from '../hooks/useSSE'
 export default function CreateDataset() {
   const [topic, setTopic] = useState('')
   const [targetSize, setTargetSize] = useState(100)
-  const [provider, setProvider] = useState<string>('')
+  const [provider, setProvider] = useState<string>('ollama')
   const [model, setModel] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -109,7 +109,6 @@ export default function CreateDataset() {
               onChange={(e) => setProvider(e.target.value)}
               disabled={generating}
             >
-              <option value="">(default)</option>
               {providers.map((p) => (
                 <option key={p.name} value={p.name}>{p.name}</option>
               ))}

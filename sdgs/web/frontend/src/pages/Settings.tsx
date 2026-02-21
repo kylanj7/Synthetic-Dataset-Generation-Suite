@@ -3,6 +3,7 @@ import { Key, Trash2, Plus, Check } from 'lucide-react'
 import {
   getProviders, getApiKeys, saveApiKey, deleteApiKey,
   getHFTokenStatus, saveHFToken, deleteHFToken,
+  getS2TokenStatus, saveS2Token, deleteS2Token,
   ProviderInfo, ApiKeyInfo,
 } from '../api/client'
 
@@ -14,19 +15,24 @@ export default function Settings() {
   const [editingKey, setEditingKey] = useState('')
   const [editingHF, setEditingHF] = useState(false)
   const [hfToken, setHfToken] = useState('')
+  const [s2Configured, setS2Configured] = useState(false)
+  const [editingS2, setEditingS2] = useState(false)
+  const [s2Token, setS2Token] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
   const refresh = async () => {
     try {
-      const [p, k, hf] = await Promise.all([
+      const [p, k, hf, s2] = await Promise.all([
         getProviders(),
         getApiKeys(),
         getHFTokenStatus(),
+        getS2TokenStatus(),
       ])
       setProviders(p)
       setApiKeys(k)
       setHfConfigured(hf.configured)
+      setS2Configured(s2.configured)
     } catch {
       // ignore
     }
@@ -88,6 +94,34 @@ export default function Settings() {
       await refresh()
     } catch {
       setMessage('Failed to remove HuggingFace token')
+    }
+    setSaving(false)
+  }
+
+  const handleSaveS2Token = async () => {
+    if (!s2Token.trim()) return
+    setSaving(true)
+    setMessage('')
+    try {
+      await saveS2Token(s2Token.trim())
+      setEditingS2(false)
+      setS2Token('')
+      setMessage('Semantic Scholar API key saved')
+      await refresh()
+    } catch {
+      setMessage('Failed to save Semantic Scholar API key')
+    }
+    setSaving(false)
+  }
+
+  const handleDeleteS2Token = async () => {
+    setSaving(true)
+    try {
+      await deleteS2Token()
+      setMessage('Semantic Scholar API key removed')
+      await refresh()
+    } catch {
+      setMessage('Failed to remove Semantic Scholar API key')
     }
     setSaving(false)
   }
@@ -257,6 +291,61 @@ export default function Settings() {
             </button>
             {editingHF && (
               <button className="btn" onClick={() => setEditingHF(false)}>
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Semantic Scholar API Key */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
+          Semantic Scholar API Key
+        </h2>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+          Improves paper search with higher rate limits. Get your key from{' '}
+          <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noopener noreferrer">
+            semanticscholar.org/product/api
+          </a>
+        </p>
+
+        {s2Configured && !editingS2 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '13px', color: 'var(--accent-green)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Check size={14} /> API key configured
+            </span>
+            <button className="btn" style={{ padding: '4px 8px' }} onClick={() => setEditingS2(true)}>
+              Update
+            </button>
+            <button
+              className="btn btn-danger"
+              style={{ padding: '4px 8px' }}
+              onClick={handleDeleteS2Token}
+              disabled={saving}
+            >
+              <Trash2 size={14} /> Remove
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="password"
+              placeholder="Enter Semantic Scholar API key"
+              value={s2Token}
+              onChange={(e) => setS2Token(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveS2Token()}
+              autoFocus={editingS2}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={handleSaveS2Token}
+              disabled={saving || !s2Token.trim()}
+            >
+              Save
+            </button>
+            {editingS2 && (
+              <button className="btn" onClick={() => setEditingS2(false)}>
                 Cancel
               </button>
             )}

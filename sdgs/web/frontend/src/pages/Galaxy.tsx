@@ -8,7 +8,7 @@ import PaperDetailPanel from '../components/galaxy/PaperDetail'
 
 export default function Galaxy() {
   const {
-    data, selectedPaper, loading, showQA, searchQuery, activeCluster,
+    data, selectedPaper, loading, error, showQA, searchQuery, activeCluster,
     fetchData, selectPaper, clearSelection,
     setShowQA, setSearchQuery, setActiveCluster,
   } = useGalaxyStore()
@@ -23,11 +23,23 @@ export default function Galaxy() {
     if (node.type === 'paper') {
       const paperId = parseInt(node.id.replace('paper-', ''))
       selectPaper(paperId)
+    } else if (node.type === 'dataset') {
+      // Toggle cluster filter to this dataset's cluster
+      setActiveCluster(activeCluster === node.cluster ? null : node.cluster)
     }
-  }, [selectPaper])
+  }, [selectPaper, setActiveCluster, activeCluster])
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: '40px' }}><div className="spinner" /></div>
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--accent-red, #ff6b6b)' }}>
+        <h3>Galaxy Error</h3>
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: '13px', maxWidth: '600px', margin: '0 auto' }}>{error}</pre>
+      </div>
+    )
   }
 
   return (

@@ -1,11 +1,11 @@
-"""Galaxy graph construction service — builds nodes/links from papers and Q&A pairs."""
+"""Galaxy graph construction service — builds nodes/links from datasets, papers, and Q&A pairs."""
 import math
 import re
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from ..db.models import Paper, QAPair
+from ..db.models import Dataset, Paper, QAPair
 
 STOP_WORDS = {
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -38,11 +38,16 @@ def extract_keywords(text: str, max_keywords: int = 10) -> list[str]:
 
 
 def build_galaxy_data(db: Session, user_id: int) -> dict:
-    """Build the full galaxy graph from database contents for a specific user."""
+    """Build the full galaxy graph from datasets, papers, and Q&A pairs."""
+    datasets = (
+        db.query(Dataset)
+        .filter(Dataset.user_id == user_id, Dataset.status == "completed")
+        .all()
+    )
     papers = db.query(Paper).filter(Paper.user_id == user_id).all()
     qa_pairs = db.query(QAPair).filter(QAPair.user_id == user_id).all()
 
-    if not papers:
+    if not datasets and not papers and not qa_pairs:
         return {"nodes": [], "links": [], "clusters": []}
 
     # Extract keywords and build paper keyword map
@@ -50,70 +55,63 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     for p in papers:
         text = f"{p.title or ''} {p.abstract or ''}"
         paper_keywords[p.id] = extract_keywords(text)
-        p._keywords = paper_keywords[p.id]
 
-    # Cluster papers by keyword overlap (greedy grouping)
-    clusters: list[list[Paper]] = []
-    assigned = set()
-
-    for p in sorted(papers, key=lambda x: x.citation_count or 0, reverse=True):
-        if p.id in assigned:
-            continue
-        cluster = [p]
-        assigned.add(p.id)
-        p_kw = set(paper_keywords[p.id])
-
-        for other in papers:
-            if other.id in assigned:
-                continue
-            other_kw = set(paper_keywords[other.id])
-            overlap = len(p_kw & other_kw)
-            if overlap >= 2:
-                cluster.append(other)
-                assigned.add(other.id)
-
-        clusters.append(cluster)
-
-    # Assign remaining unassigned papers to cluster 0
-    for p in papers:
-        if p.id not in assigned:
-            if clusters:
-                clusters[0].append(p)
-            else:
-                clusters.append([p])
-            assigned.add(p.id)
-
-    # Build cluster info and paper->cluster mapping
-    paper_cluster: dict[int, int] = {}
+    # Use datasets as clusters (one cluster per dataset)
     cluster_infos = []
-    for i, cluster_papers in enumerate(clusters):
-        color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-        # Label from most common keyword in cluster
-        all_kw = []
-        for p in cluster_papers:
-            all_kw.extend(paper_keywords[p.id])
-        freq = defaultdict(int)
-        for w in all_kw:
-            freq[w] += 1
-        label = max(freq, key=freq.get) if freq else f"cluster-{i}"
+    paper_cluster: dict[int, int] = {}
+    dataset_cluster: dict[int, int] = {}
 
+    for i, ds in enumerate(datasets):
+        color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
+        ds_papers = [p for p in papers if p.dataset_id == ds.id]
         cluster_infos.append({
             "id": i,
-            "label": label,
+            "label": ds.topic[:30] if ds.topic else f"Dataset {ds.id}",
             "color": color,
-            "paper_count": len(cluster_papers),
+            "paper_count": len(ds_papers),
         })
-        for p in cluster_papers:
+        dataset_cluster[ds.id] = i
+        for p in ds_papers:
             paper_cluster[p.id] = i
 
-    # Build paper->qa lookup
-    paper_qa_map: dict[int, list[QAPair]] = defaultdict(list)
-    for qa in qa_pairs:
-        if qa.paper_id:
-            paper_qa_map[qa.paper_id].append(qa)
+    # Assign orphan papers (no dataset) to a misc cluster
+    orphan_papers = [p for p in papers if p.id not in paper_cluster]
+    if orphan_papers:
+        misc_idx = len(cluster_infos)
+        cluster_infos.append({
+            "id": misc_idx,
+            "label": "uncategorized",
+            "color": "#888888",
+            "paper_count": len(orphan_papers),
+        })
+        for p in orphan_papers:
+            paper_cluster[p.id] = misc_idx
 
     # Build nodes
     nodes = []
+
+    # Dataset nodes — large central hubs
+    for ds in datasets:
+        cid = dataset_cluster.get(ds.id, 0)
+        color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
+        ds_qa_count = sum(1 for qa in qa_pairs if qa.dataset_id == ds.id)
+        ds_paper_count = sum(1 for p in papers if p.dataset_id == ds.id)
+        size = 12 + math.log2(ds_qa_count + 1) * 3
+        nodes.append({
+            "id": f"dataset-{ds.id}",
+            "type": "dataset",
+            "label": ds.topic or ds.name,
+            "size": round(size, 1),
+            "color": color,
+            "cluster": cid,
+            "year": None,
+            "citation_count": None,
+            "abstract": f"{ds_paper_count} papers, {ds_qa_count} Q&A pairs | {ds.provider or 'unknown'}/{ds.model or 'default'}",
+            "authors": None,
+            "url": None,
+        })
+
+    # Paper nodes
     for p in papers:
         cid = paper_cluster.get(p.id, 0)
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
@@ -132,8 +130,12 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
             "url": p.url,
         })
 
+    # QA nodes
     for qa in qa_pairs:
         cid = paper_cluster.get(qa.paper_id, 0) if qa.paper_id else 0
+        # Fall back to dataset cluster if no paper link
+        if not qa.paper_id and qa.dataset_id and qa.dataset_id in dataset_cluster:
+            cid = dataset_cluster[qa.dataset_id]
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#6ee7d8"
         nodes.append({
             "id": f"qa-{qa.id}",
@@ -149,6 +151,16 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     # Build links
     links = []
 
+    # Dataset -> Paper links
+    for p in papers:
+        if p.dataset_id:
+            links.append({
+                "source": f"dataset-{p.dataset_id}",
+                "target": f"paper-{p.id}",
+                "weight": 0.5,
+                "type": "dataset_paper",
+            })
+
     # Paper -> QA links
     for qa in qa_pairs:
         if qa.paper_id:
@@ -158,6 +170,14 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
                 "weight": 0.3,
                 "type": "paper_qa",
             })
+        elif qa.dataset_id:
+            # QA without a paper link — connect directly to dataset
+            links.append({
+                "source": f"dataset-{qa.dataset_id}",
+                "target": f"qa-{qa.id}",
+                "weight": 0.2,
+                "type": "dataset_qa",
+            })
 
     # Shared keyword links between papers
     paper_list = list(papers)
@@ -165,8 +185,8 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
         for j in range(i + 1, len(paper_list)):
             p1 = paper_list[i]
             p2 = paper_list[j]
-            kw1 = set(paper_keywords[p1.id])
-            kw2 = set(paper_keywords[p2.id])
+            kw1 = set(paper_keywords.get(p1.id, []))
+            kw2 = set(paper_keywords.get(p2.id, []))
             overlap = len(kw1 & kw2)
             if overlap >= 2:
                 links.append({
@@ -175,29 +195,6 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
                     "weight": overlap / 10,
                     "type": "keyword",
                 })
-
-    # Co-topic links (same dataset)
-    dataset_papers: dict[int, list[Paper]] = defaultdict(list)
-    for p in papers:
-        if p.dataset_id:
-            dataset_papers[p.dataset_id].append(p)
-
-    for ds_id, dpapers in dataset_papers.items():
-        for i in range(len(dpapers)):
-            for j in range(i + 1, len(dpapers)):
-                # Only add if not already linked by keywords
-                key = (f"paper-{dpapers[i].id}", f"paper-{dpapers[j].id}")
-                already = any(
-                    (l["source"], l["target"]) == key or (l["target"], l["source"]) == key
-                    for l in links if l["type"] == "keyword"
-                )
-                if not already:
-                    links.append({
-                        "source": f"paper-{dpapers[i].id}",
-                        "target": f"paper-{dpapers[j].id}",
-                        "weight": 0.1,
-                        "type": "co_topic",
-                    })
 
     return {
         "nodes": nodes,
