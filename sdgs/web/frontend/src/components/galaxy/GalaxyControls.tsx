@@ -1,17 +1,14 @@
-import { Search, Eye, EyeOff } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 interface Props {
-  showQA: boolean
   searchQuery: string
-  onToggleQA: () => void
   onSearch: (q: string) => void
 }
 
-export default function GalaxyControls({ showQA, searchQuery, onToggleQA, onSearch }: Props) {
+export default function GalaxyControls({ searchQuery, onSearch }: Props) {
   return (
     <div className="card" style={{ padding: '12px', width: '280px' }}>
-      {/* Search */}
-      <div style={{ position: 'relative', marginBottom: '8px' }}>
+      <div style={{ position: 'relative' }}>
         <input
           value={searchQuery}
           onChange={e => onSearch(e.target.value)}
@@ -23,12 +20,6 @@ export default function GalaxyControls({ showQA, searchQuery, onToggleQA, onSear
           color: 'var(--text-muted)',
         }} />
       </div>
-
-      {/* QA toggle */}
-      <button className="btn" onClick={onToggleQA} style={{ width: '100%', justifyContent: 'center', fontSize: '13px' }}>
-        {showQA ? <Eye size={14} /> : <EyeOff size={14} />}
-        {showQA ? 'Hide Q&A Nodes' : 'Show Q&A Nodes'}
-      </button>
     </div>
   )
 }

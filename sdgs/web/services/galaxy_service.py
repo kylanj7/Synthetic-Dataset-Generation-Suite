@@ -1,4 +1,4 @@
-"""Galaxy graph construction service — builds nodes/links from datasets, papers, and Q&A pairs."""
+"""Galaxy graph construction service — builds nodes/links from datasets and papers."""
 import math
 import re
 from collections import defaultdict
@@ -38,7 +38,7 @@ def extract_keywords(text: str, max_keywords: int = 10) -> list[str]:
 
 
 def build_galaxy_data(db: Session, user_id: int) -> dict:
-    """Build the full galaxy graph from datasets, papers, and Q&A pairs."""
+    """Build the galaxy graph from datasets and papers (QA pairs excluded for performance)."""
     datasets = (
         db.query(Dataset)
         .filter(Dataset.user_id == user_id, Dataset.status == "completed")
@@ -47,22 +47,23 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     papers = db.query(Paper).filter(Paper.user_id == user_id).all()
     qa_pairs = db.query(QAPair).filter(QAPair.user_id == user_id).all()
 
-    if not datasets and not papers and not qa_pairs:
+    if not datasets and not papers:
         return {"nodes": [], "links": [], "clusters": []}
 
-    # ── Pre-build lookup dicts (O(n) instead of O(n²)) ──
+    # ── Pre-build lookup dicts ──
     papers_by_dataset: dict[int, list] = defaultdict(list)
     for p in papers:
         if p.dataset_id:
             papers_by_dataset[p.dataset_id].append(p)
 
-    qa_by_dataset: dict[int, list] = defaultdict(list)
-    qa_by_paper: dict[int, list] = defaultdict(list)
+    # Count QA pairs per paper and per dataset (for sizing, not for nodes)
+    qa_count_by_paper: dict[int, int] = defaultdict(int)
+    qa_count_by_dataset: dict[int, int] = defaultdict(int)
     for qa in qa_pairs:
-        if qa.dataset_id:
-            qa_by_dataset[qa.dataset_id].append(qa)
         if qa.paper_id:
-            qa_by_paper[qa.paper_id].append(qa)
+            qa_count_by_paper[qa.paper_id] += 1
+        if qa.dataset_id:
+            qa_count_by_dataset[qa.dataset_id] += 1
 
     # Extract keywords and build paper keyword map
     paper_keywords: dict[int, list[str]] = {}
@@ -108,7 +109,7 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     for ds in datasets:
         cid = dataset_cluster.get(ds.id, 0)
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
-        ds_qa_count = len(qa_by_dataset[ds.id])
+        ds_qa_count = qa_count_by_dataset[ds.id]
         ds_paper_count = len(papers_by_dataset[ds.id])
         size = 12 + math.log2(ds_qa_count + 1) * 3
         nodes.append({
@@ -125,11 +126,12 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
             "url": None,
         })
 
-    # Paper nodes
+    # Paper nodes — sized by QA count + citation count
     for p in papers:
         cid = paper_cluster.get(p.id, 0)
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
-        size = 4 + math.log2((p.citation_count or 0) + 1) * 3
+        qa_count = qa_count_by_paper[p.id]
+        size = 4 + math.log2(qa_count + 1) * 2 + math.log2((p.citation_count or 0) + 1) * 2
         nodes.append({
             "id": f"paper-{p.id}",
             "type": "paper",
@@ -142,24 +144,7 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
             "abstract": (p.abstract or "")[:300],
             "authors": p.authors or [],
             "url": p.url,
-        })
-
-    # QA nodes
-    for qa in qa_pairs:
-        cid = paper_cluster.get(qa.paper_id, 0) if qa.paper_id else 0
-        # Fall back to dataset cluster if no paper link
-        if not qa.paper_id and qa.dataset_id and qa.dataset_id in dataset_cluster:
-            cid = dataset_cluster[qa.dataset_id]
-        color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#6ee7d8"
-        nodes.append({
-            "id": f"qa-{qa.id}",
-            "type": "qa",
-            "label": (qa.instruction or "")[:50],
-            "size": 2,
-            "color": color,
-            "cluster": cid,
-            "instruction": qa.instruction,
-            "output_preview": (qa.output or "")[:200],
+            "qa_pair_count": qa_count,
         })
 
     # Build links
@@ -173,24 +158,6 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
                 "target": f"paper-{p.id}",
                 "weight": 0.5,
                 "type": "dataset_paper",
-            })
-
-    # Paper -> QA links
-    for qa in qa_pairs:
-        if qa.paper_id:
-            links.append({
-                "source": f"paper-{qa.paper_id}",
-                "target": f"qa-{qa.id}",
-                "weight": 0.3,
-                "type": "paper_qa",
-            })
-        elif qa.dataset_id:
-            # QA without a paper link — connect directly to dataset
-            links.append({
-                "source": f"dataset-{qa.dataset_id}",
-                "target": f"qa-{qa.id}",
-                "weight": 0.2,
-                "type": "dataset_qa",
             })
 
     # Shared keyword links between papers (cap at 200 papers to avoid O(n²) blowup)

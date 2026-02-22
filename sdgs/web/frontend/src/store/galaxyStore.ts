@@ -6,14 +6,12 @@ interface GalaxyStore {
   selectedPaper: PaperDetail | null
   loading: boolean
   error: string | null
-  showQA: boolean
   searchQuery: string
   activeCluster: number | null
 
   fetchData: () => Promise<void>
   selectPaper: (paperId: number) => Promise<void>
   clearSelection: () => void
-  setShowQA: (show: boolean) => void
   setSearchQuery: (q: string) => void
   setActiveCluster: (id: number | null) => void
 }
@@ -23,7 +21,6 @@ export const useGalaxyStore = create<GalaxyStore>((set) => ({
   selectedPaper: null,
   loading: false,
   error: null,
-  showQA: true,
   searchQuery: '',
   activeCluster: null,
 
@@ -47,7 +44,6 @@ export const useGalaxyStore = create<GalaxyStore>((set) => ({
   },
 
   clearSelection: () => set({ selectedPaper: null }),
-  setShowQA: (show) => set({ showQA: show }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setActiveCluster: (id) => set({ activeCluster: id }),
 }))

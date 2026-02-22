@@ -8,9 +8,9 @@ import PaperDetailPanel from '../components/galaxy/PaperDetail'
 
 export default function Galaxy() {
   const {
-    data, selectedPaper, loading, error, showQA, searchQuery, activeCluster,
+    data, selectedPaper, loading, error, searchQuery, activeCluster,
     fetchData, selectPaper, clearSelection,
-    setShowQA, setSearchQuery, setActiveCluster,
+    setSearchQuery, setActiveCluster,
   } = useGalaxyStore()
 
   const graphData = useGalaxyGraph()
@@ -50,9 +50,7 @@ export default function Galaxy() {
         display: 'flex', flexDirection: 'column', gap: '8px',
       }}>
         <GalaxyControls
-          showQA={showQA}
           searchQuery={searchQuery}
-          onToggleQA={() => setShowQA(!showQA)}
           onSearch={setSearchQuery}
         />
       </div>
