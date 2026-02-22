@@ -1,4 +1,5 @@
 """HuggingFace Hub integration: push datasets to HF."""
+import json
 import tempfile
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from huggingface_hub import HfApi
 def push_dataset_to_hf(
     hf_token: str,
     repo_name: str,
-    dataset_path: str,
+    qa_pairs: list[dict],
     topic: str,
     pair_count: int,
     valid_count: int,
@@ -26,6 +27,9 @@ def push_dataset_to_hf(
 
     Returns the repo URL.
     """
+    if not qa_pairs:
+        raise ValueError("No Q&A pairs to upload — dataset is empty.")
+
     api = HfApi(token=hf_token)
 
     # Create or get the repo
@@ -36,15 +40,19 @@ def push_dataset_to_hf(
         exist_ok=True,
     )
 
-    # Upload the JSONL file
-    file_path = Path(dataset_path)
-    if file_path.exists():
-        api.upload_file(
-            path_or_fileobj=str(file_path),
-            path_in_repo="data/train.jsonl",
-            repo_id=repo_name,
-            repo_type="dataset",
-        )
+    # Write QA pairs to a temp JSONL and upload
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        for pair in qa_pairs:
+            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+        jsonl_path = f.name
+
+    api.upload_file(
+        path_or_fileobj=jsonl_path,
+        path_in_repo="data/train.jsonl",
+        repo_id=repo_name,
+        repo_type="dataset",
+    )
+    Path(jsonl_path).unlink(missing_ok=True)
 
     # Generate and upload README card
     readme = _generate_readme(

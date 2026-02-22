@@ -481,8 +481,24 @@ def push_to_huggingface(
     except Exception:
         raise HTTPException(400, "Cannot decrypt HF token. Please re-login and try again.")
 
+    # Build QA pairs from the database (source of truth, not local files)
+    from ..db.models import Paper, QAPair
+    qa_records = db.query(QAPair).filter(QAPair.dataset_id == dataset_id).all()
+    if not qa_records:
+        raise HTTPException(400, "Dataset has no Q&A pairs. Generation may have failed.")
+
+    qa_pairs = [
+        {
+            "instruction": qa.instruction,
+            "output": qa.output,
+            "is_valid": qa.is_valid,
+            "was_healed": qa.was_healed,
+            "source_title": qa.source_title,
+        }
+        for qa in qa_records
+    ]
+
     # Gather source papers for citations
-    from ..db.models import Paper
     papers = db.query(Paper).filter(Paper.dataset_id == dataset_id).all()
     sources = []
     for p in papers:
@@ -501,10 +517,10 @@ def push_to_huggingface(
     repo_url = push_dataset_to_hf(
         hf_token=hf_token,
         repo_name=req.repo_name,
-        dataset_path=ds.output_path or "",
+        qa_pairs=qa_pairs,
         topic=ds.topic,
-        pair_count=ds.actual_size,
-        valid_count=ds.valid_count,
+        pair_count=ds.actual_size or len(qa_pairs),
+        valid_count=ds.valid_count or sum(1 for q in qa_pairs if q["is_valid"]),
         provider=ds.provider,
         model=ds.model,
         description=req.description,
