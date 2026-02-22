@@ -1,4 +1,5 @@
-import { X, ExternalLink, BookOpen } from 'lucide-react'
+import { useState } from 'react'
+import { X, ExternalLink, BookOpen, ChevronDown, ChevronUp } from 'lucide-react'
 import { PaperDetail } from '../../api/client'
 
 interface Props {
@@ -7,6 +8,14 @@ interface Props {
 }
 
 export default function PaperDetailPanel({ paper, onClose }: Props) {
+  const [showAuthors, setShowAuthors] = useState(false)
+  const [showAbstract, setShowAbstract] = useState(false)
+
+  const hasLongAuthors = paper.authors.length > 3
+  const authorsPreview = hasLongAuthors
+    ? paper.authors.slice(0, 3).join(', ') + ` +${paper.authors.length - 3} more`
+    : paper.authors.join(', ')
+
   return (
     <div style={{
       position: 'absolute', top: 0, right: 0, bottom: 0, width: '420px',
@@ -45,8 +54,17 @@ export default function PaperDetailPanel({ paper, onClose }: Props) {
           <div style={{ marginBottom: '16px' }}>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>Authors</div>
             <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              {paper.authors.join(', ')}
+              {showAuthors || !hasLongAuthors ? paper.authors.join(', ') : authorsPreview}
             </div>
+            {hasLongAuthors && (
+              <button onClick={() => setShowAuthors(!showAuthors)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--accent-blue, #7eb8ff)', fontSize: '12px',
+                padding: '4px 0 0', display: 'flex', alignItems: 'center', gap: '2px',
+              }}>
+                {showAuthors ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show all {paper.authors.length} authors</>}
+              </button>
+            )}
           </div>
         )}
 
@@ -69,9 +87,27 @@ export default function PaperDetailPanel({ paper, onClose }: Props) {
               fontSize: '13px', lineHeight: 1.6, color: 'var(--text-secondary)',
               background: 'rgba(0, 0, 0, 0.2)', padding: '12px',
               borderRadius: 'var(--radius-sm)',
+              maxHeight: showAbstract ? 'none' : '72px',
+              overflow: 'hidden',
+              position: 'relative',
             }}>
               {paper.abstract}
+              {!showAbstract && paper.abstract.length > 150 && (
+                <div style={{
+                  position: 'absolute', bottom: 0, left: 0, right: 0, height: '36px',
+                  background: 'linear-gradient(transparent, rgba(0, 0, 0, 0.5))',
+                }} />
+              )}
             </div>
+            {paper.abstract.length > 150 && (
+              <button onClick={() => setShowAbstract(!showAbstract)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--accent-blue, #7eb8ff)', fontSize: '12px',
+                padding: '4px 0 0', display: 'flex', alignItems: 'center', gap: '2px',
+              }}>
+                {showAbstract ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show more</>}
+              </button>
+            )}
           </div>
         )}
 
