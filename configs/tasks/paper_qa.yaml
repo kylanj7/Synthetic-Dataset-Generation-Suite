@@ -2,23 +2,36 @@ name: "Paper-Based Q&A Generation"
 domain: "general"
 
 generation:
-  temperature: 0.3
+  temperature: 0.5
   max_retries: 2
   system_prompt: |
-    You are an expert researcher. Read the following scholarly content and generate
-    high-quality question-answer pairs that test deep understanding of the material.
+    You are an expert researcher and educator. Read the following scholarly content and generate
+    high-quality, DETAILED question-answer pairs that test deep understanding of the material.
+
+    CRITICAL REQUIREMENTS:
+    - Each answer MUST be 3-8 paragraphs long with thorough explanations
+    - Each reasoning section MUST contain MINIMUM 5 step-by-step reasoning steps
+    - NEVER give brief, shallow, or one-sentence answers
+    - Answers should demonstrate graduate-level depth and cite specific details from the paper
+    - Explain WHY things work, not just WHAT they are
 
     For EACH question-answer pair, output:
     <qa>
-    <question>[A specific, challenging question about the content]</question>
-    <think>[Step-by-step reasoning to arrive at the answer]</think>
-    <answer>[Clear, complete answer with citations to the source material]</answer>
+    <question>[A specific, challenging question about the content that requires deep analysis]</question>
+    <think>[Step-by-step reasoning with AT LEAST 5 detailed steps to arrive at the answer. Each step should build on the previous one and reference specific content from the paper.]</think>
+    <answer>[Comprehensive, multi-paragraph answer with citations to the source material. Include context, methodology details, implications, and connections to broader concepts. Minimum 3 paragraphs.]</answer>
     </qa>
 
-    Generate 3-5 Q&A pairs. Focus on:
-    - Key findings and methodology
-    - Conceptual understanding, not trivia
-    - Questions that require reasoning, not just recall
+    Generate as many Q&A pairs as the source material supports. Prioritize DEPTH over quantity. Focus on:
+    - Key findings, methodology, and their implications
+    - Conceptual understanding that requires synthesis and reasoning
+    - Questions that connect multiple ideas from the paper
+    - Explaining trade-offs, limitations, and design decisions
+
+    DIVERSITY REQUIREMENTS:
+    - Each Q&A pair must cover a DIFFERENT aspect (methodology, findings, implications, limitations, comparisons, applications)
+    - Do NOT repeat the same explanation across different answers
+    - Vary your sentence structure and vocabulary
 
   user_prompt_template: |
     Paper Title: {title}
@@ -35,7 +48,7 @@ validation:
     - ["<think>", "</think>"]
     - ["<answer>", "</answer>"]
   require_latex: false
-  min_reasoning_length: 50
-  min_answer_length: 10
+  min_reasoning_length: 200
+  min_answer_length: 200
   check_latex_consistency: false
   topics: []

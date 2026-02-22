@@ -359,6 +359,46 @@ def fetch_full_text(paper: dict) -> str | None:
     return None
 
 
+# ── Text chunking for long papers ──────────────────────────────────────
+
+def _last_n_sentences(text: str, n: int = 2) -> str:
+    """Extract the last *n* complete sentences from text."""
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text.strip())
+    if len(sentences) <= n:
+        return text.strip()
+    return ' '.join(sentences[-n:])
+
+
+def _chunk_text(text: str, chunk_size: int = 10000) -> list[str]:
+    """Split text into chunks at semantic boundaries (paragraph/section breaks).
+
+    Uses paragraph splits and looks for section headers near boundaries.
+    Overlap is done by including the last 2 complete sentences from the
+    previous chunk rather than a fixed character count.
+    """
+    paragraphs = text.split('\n\n')
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    prev_tail = ""  # last 2 sentences from previous chunk for overlap
+
+    for para in paragraphs:
+        if current_len + len(para) > chunk_size and current:
+            chunk_text = prev_tail + '\n\n'.join(current)
+            chunks.append(chunk_text)
+            # Extract last 2 sentences for overlap context
+            prev_tail = _last_n_sentences('\n\n'.join(current), n=2) + '\n\n'
+            current = [para]
+            current_len = len(para)
+        else:
+            current.append(para)
+            current_len += len(para) + 2
+
+    if current:
+        chunks.append(prev_tail + '\n\n'.join(current))
+    return chunks
+
+
 # ── Q&A generation from papers ─────────────────────────────────────────
 
 def _parse_qa_pairs(content: str, paper: dict) -> list[dict]:
@@ -409,51 +449,19 @@ def _parse_qa_pairs(content: str, paper: dict) -> list[dict]:
     return pairs
 
 
-def generate_qa_for_paper(
+def _make_qa_call(
     client,
     model: str,
-    extra_params: dict,
-    task_config: dict,
+    api_params: dict,
+    system_prompt: str,
+    user_msg: str,
+    temperature: float,
+    max_tokens: int,
+    max_retries: int,
     paper: dict,
     token_tracker: TokenTracker | None = None,
-    max_tokens: int = 4096,
 ) -> list[dict]:
-    """Generate Q&A pairs for a single paper using the LLM.
-
-    Args:
-        client: OpenAI-compatible client.
-        model: Model name.
-        extra_params: Provider-specific params.
-        task_config: Task YAML config.
-        paper: Paper metadata dict with full_text or abstract.
-        token_tracker: Optional tracker to accumulate usage.
-
-    Returns:
-        List of Q&A dicts.
-    """
-    gen_config = task_config["generation"]
-    system_prompt = gen_config["system_prompt"]
-    user_template = gen_config["user_prompt_template"]
-    temperature = gen_config.get("temperature", 0.3)
-    max_retries = gen_config.get("max_retries", 2)
-
-    content = paper.get("full_text") or paper.get("abstract") or ""
-    if not content:
-        return []
-
-    # Truncate very long texts to avoid token limits
-    if len(content) > 30000:
-        content = content[:30000] + "\n\n[Content truncated for length]"
-
-    authors_str = ", ".join(paper.get("authors", [])[:5])
-    user_msg = user_template.format(
-        title=paper["title"],
-        authors=authors_str,
-        content=content,
-    )
-
-    api_params = {k: v for k, v in extra_params.items() if not k.startswith("_")}
-
+    """Make a single LLM call to generate Q&A pairs and parse the result."""
     for attempt in range(1, max_retries + 1):
         try:
             kwargs = dict(
@@ -489,6 +497,98 @@ def generate_qa_for_paper(
                 time.sleep(2)
 
     return []
+
+
+def generate_qa_for_paper(
+    client,
+    model: str,
+    extra_params: dict,
+    task_config: dict,
+    paper: dict,
+    token_tracker: TokenTracker | None = None,
+    max_tokens: int = 8192,
+) -> list[dict]:
+    """Generate Q&A pairs for a single paper using the LLM.
+
+    For long papers (>12K chars), splits into ~10K chunks and makes one
+    LLM call per chunk. For shorter content, makes a single call with a
+    dynamic pair count based on content length.
+
+    Args:
+        client: OpenAI-compatible client.
+        model: Model name.
+        extra_params: Provider-specific params.
+        task_config: Task YAML config.
+        paper: Paper metadata dict with full_text or abstract.
+        token_tracker: Optional tracker to accumulate usage.
+        max_tokens: Max tokens for LLM response (default 8192).
+
+    Returns:
+        List of Q&A dicts.
+    """
+    gen_config = task_config["generation"]
+    system_prompt = gen_config["system_prompt"]
+    user_template = gen_config["user_prompt_template"]
+    temperature = gen_config.get("temperature", 0.5)
+    max_retries = gen_config.get("max_retries", 2)
+
+    content = paper.get("full_text") or paper.get("abstract") or ""
+    if not content:
+        return []
+
+    authors_str = ", ".join(paper.get("authors", [])[:5])
+    api_params = {k: v for k, v in extra_params.items() if not k.startswith("_")}
+
+    # ── Chunked generation for long papers ──
+    if len(content) > 12000:
+        chunks = _chunk_text(content, chunk_size=10000)
+        print(f"    Splitting into {len(chunks)} chunks for generation")
+        all_pairs: list[dict] = []
+
+        for i, chunk in enumerate(chunks):
+            count_hint = (
+                f"\n\nGenerate 3-4 Q&A pairs from this section "
+                f"(section {i + 1}/{len(chunks)} of the paper)."
+            )
+            chunk_system = system_prompt + count_hint
+
+            user_msg = user_template.format(
+                title=paper["title"],
+                authors=authors_str,
+                content=chunk,
+            )
+
+            pairs = _make_qa_call(
+                client, model, api_params, chunk_system, user_msg,
+                temperature, max_tokens, max_retries, paper, token_tracker,
+            )
+            all_pairs.extend(pairs)
+            if pairs:
+                print(f"    Chunk {i + 1}/{len(chunks)}: {len(pairs)} pairs")
+            else:
+                print(f"    Chunk {i + 1}/{len(chunks)}: 0 pairs")
+
+        return all_pairs
+
+    # ── Single call for shorter content with dynamic count ──
+    content_len = len(content)
+    if content_len < 2000:
+        count_hint = "\n\nGenerate 3-5 Q&A pairs from this content."
+    else:
+        count_hint = "\n\nGenerate 6-8 Q&A pairs from this content."
+
+    adjusted_system = system_prompt + count_hint
+
+    user_msg = user_template.format(
+        title=paper["title"],
+        authors=authors_str,
+        content=content,
+    )
+
+    return _make_qa_call(
+        client, model, api_params, adjusted_system, user_msg,
+        temperature, max_tokens, max_retries, paper, token_tracker,
+    )
 
 
 # ── Pipeline orchestrator ──────────────────────────────────────────────
@@ -594,7 +694,7 @@ def run_scrape(
     if temperature is not None:
         task_config["generation"]["temperature"] = temperature
 
-    effective_max_tokens = max_tokens if max_tokens is not None else 4096
+    effective_max_tokens = max_tokens if max_tokens is not None else 8192
 
     client, model_name, extra_params = get_client(provider, model=model, api_key=api_key)
     rate_delay = extra_params.get("_rate_limit_delay", 0)
