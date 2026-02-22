@@ -1,11 +1,13 @@
 import { NavLink } from 'react-router-dom'
-import { Database, FileText, Orbit, Settings, LogOut } from 'lucide-react'
+import { Database, FileText, Orbit, Cpu, FlaskConical, Settings, LogOut } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 
 const navItems = [
   { to: '/', icon: Database, label: 'Datasets' },
   { to: '/papers', icon: FileText, label: 'Papers' },
   { to: '/galaxy', icon: Orbit, label: 'Galaxy' },
+  { to: '/training', icon: Cpu, label: 'Training' },
+  { to: '/evaluations', icon: FlaskConical, label: 'Evaluations' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

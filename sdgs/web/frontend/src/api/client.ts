@@ -330,5 +330,124 @@ export const getGalaxyData = () => request<GalaxyData>('/galaxy/data')
 export const getPaperDetail = (paperId: number) =>
   request<PaperDetail>(`/galaxy/paper/${paperId}`)
 
+// Training
+export interface TrainingRun {
+  id: number
+  run_name: string
+  status: string
+  dataset_id: number | null
+  base_model: string
+  model_size: string
+  lora_rank: number
+  lora_alpha: number
+  learning_rate: number
+  num_epochs: number
+  batch_size: number
+  gradient_accumulation_steps: number
+  max_steps: number
+  dataset_path: string | null
+  train_samples: number
+  val_samples: number
+  test_samples: number
+  adapter_path: string | null
+  output_dir: string | null
+  final_loss: number | null
+  total_steps: number | null
+  training_runtime_seconds: number | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number
+  error_message: string | null
+}
+
+export interface TrainingRunListResponse {
+  runs: TrainingRun[]
+  total: number
+  page: number
+  per_page: number
+}
+
+export interface StartTrainingRequest {
+  dataset_id?: number | null
+  dataset_path?: string | null
+  base_model?: string
+  model_size?: string
+  lora_rank?: number
+  lora_alpha?: number
+  learning_rate?: number
+  num_epochs?: number
+  batch_size?: number
+  gradient_accumulation_steps?: number
+  max_steps?: number
+}
+
+export const startTraining = (data: StartTrainingRequest) =>
+  request<TrainingRun>('/training/start', { method: 'POST', body: JSON.stringify(data) })
+
+export const getTrainingRuns = (page = 1) =>
+  request<TrainingRunListResponse>(`/training?page=${page}`)
+
+export const getTrainingRun = (id: number) =>
+  request<TrainingRun>(`/training/${id}`)
+
+export const cancelTraining = (id: number) =>
+  request<{ cancelled: boolean }>(`/training/${id}/cancel`, { method: 'POST' })
+
+// Evaluations
+export interface EvaluationRun {
+  id: number
+  run_name: string
+  status: string
+  training_run_id: number | null
+  model_path: string | null
+  test_dataset_path: string | null
+  judge_model: string
+  max_samples: number
+  factual_accuracy: number | null
+  completeness: number | null
+  technical_precision: number | null
+  overall_accuracy: number | null
+  purity: number | null
+  entropy: number | null
+  samples_scored: number
+  samples_skipped: number
+  samples_failed: number
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number
+  error_message: string | null
+}
+
+export interface EvaluationRunListResponse {
+  evaluations: EvaluationRun[]
+  total: number
+  page: number
+  per_page: number
+}
+
+export interface StartEvaluationRequest {
+  training_run_id?: number | null
+  model_path?: string | null
+  test_dataset_path?: string | null
+  judge_model?: string
+  max_samples?: number
+}
+
+export interface EvaluationDetail extends EvaluationRun {
+  per_sample_results: unknown[]
+  articles_log: unknown[]
+}
+
+export const startEvaluation = (data: StartEvaluationRequest) =>
+  request<EvaluationRun>('/training/evaluate', { method: 'POST', body: JSON.stringify(data) })
+
+export const getEvaluations = (page = 1) =>
+  request<EvaluationRunListResponse>(`/training/evaluations?page=${page}`)
+
+export const getEvaluationDetail = (id: number) =>
+  request<EvaluationDetail>(`/training/evaluations/${id}`)
+
 // Health
 export const getHealth = () => request<{ status: string }>('/health')
