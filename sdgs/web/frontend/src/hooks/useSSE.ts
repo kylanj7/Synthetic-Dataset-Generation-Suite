@@ -6,13 +6,18 @@ export function useSSE(datasetId: number | null) {
   const [status, setStatus] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const closeRef = useRef<(() => void) | null>(null)
+  const prevIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!datasetId) return
 
-    setLogs([])
-    setStatus(null)
-    setDone(false)
+    // Only clear logs when connecting to a different dataset
+    if (prevIdRef.current !== datasetId) {
+      setLogs([])
+      setStatus(null)
+      setDone(false)
+      prevIdRef.current = datasetId
+    }
 
     const close = createDatasetSSE(
       datasetId,

@@ -10,6 +10,8 @@ import re
 import time
 from pathlib import Path
 
+import yaml
+
 from sdgs.scrape import run_scrape, generate_qa_for_paper
 from sdgs.filter import filter_dataset
 
@@ -27,6 +29,7 @@ def run_dataset_pipeline(
     temperature: float,
     s2_api_key: str | None = None,
     max_tokens: int | None = None,
+    cancel_event=None,
 ):
     """Full pipeline: calculate papers → scrape → filter → return stats.
 
@@ -59,9 +62,14 @@ def run_dataset_pipeline(
         system_prompt=system_prompt,
         temperature=temperature,
         max_tokens=max_tokens,
+        cancel_event=cancel_event,
     )
 
     # 4. Auto-filter the output
+    task_config_path = Path(__file__).parent.parent.parent / "configs" / "tasks" / "paper_qa.yaml"
+    with open(task_config_path) as f:
+        task_validation = yaml.safe_load(f).get("validation", {})
+
     raw_path = Path(output_path)
     if raw_path.exists() and raw_path.stat().st_size > 0:
         filter_dataset(
@@ -69,6 +77,7 @@ def run_dataset_pipeline(
             output_file=filtered_path,
             strict=True,
             heal=True,
+            validation_rules=task_validation,
         )
     else:
         filtered_path = output_path
@@ -231,6 +240,7 @@ def run_from_papers_pipeline(
     system_prompt: str | None = None,
     temperature: float = 0.7,
     max_tokens: int | None = None,
+    cancel_event=None,
 ):
     """Generate Q&A from pre-existing papers (no scraping step)."""
     from ..db.database import SessionLocal
@@ -276,16 +286,18 @@ def run_from_papers_pipeline(
             d["pdf_path"] = p.pdf_path
         paper_dicts.append(d)
 
-    papers_with_content = [p for p in paper_dicts if p.get("full_text") or p.get("abstract")]
+    papers_with_content = [p for p in paper_dicts if p.get("full_text")]
     if not papers_with_content:
-        raise RuntimeError("No papers with extractable content")
+        raise RuntimeError("No papers with extractable full text (PDFs required)")
 
     print(f"Generating Q&A from {len(papers_with_content)} papers...")
     print("=" * 60)
 
     # Setup LLM client
     from sdgs.providers import get_client
+    from .job_runner import register_job_client
     client, model_name, extra_params = get_client(provider, model=model, api_key=api_key)
+    register_job_client(dataset_id, client)
 
     # Load task config
     task_config_path = Path(__file__).parent.parent.parent.parent / "configs" / "tasks" / "paper_qa.yaml"
@@ -298,7 +310,7 @@ def run_from_papers_pipeline(
     if temperature is not None:
         task_config["generation"]["temperature"] = temperature
 
-    effective_max_tokens = max_tokens if max_tokens is not None else 4096
+    effective_max_tokens = max_tokens if max_tokens is not None else 8192
 
     # Generate Q&A
     from sdgs.scrape import TokenTracker, GPUTracker
@@ -315,6 +327,10 @@ def run_from_papers_pipeline(
 
     all_pairs = []
     for i, paper in enumerate(papers_with_content):
+        if cancel_event and cancel_event.is_set():
+            print("\nJob cancelled by user")
+            break
+
         title_short = paper["title"][:60]
         content_type = "full text" if paper.get("full_text") else "abstract"
         print(f"\n[{i+1}/{len(papers_with_content)}] {title_short}... ({content_type})")
@@ -322,6 +338,7 @@ def run_from_papers_pipeline(
         pairs = generate_qa_for_paper(
             client, model_name, extra_params, task_config, paper, token_tracker,
             max_tokens=effective_max_tokens,
+            cancel_event=cancel_event,
         )
 
         if pairs:
@@ -345,9 +362,11 @@ def run_from_papers_pipeline(
         print(f"Total energy: {gpu_kwh:.6f} kWh")
 
     # Filter
+    task_validation = task_config.get("validation", {})
     raw = Path(output_path)
     if raw.exists() and raw.stat().st_size > 0:
-        filter_dataset(output_path, output_file=filtered_path, strict=True, heal=True)
+        filter_dataset(output_path, output_file=filtered_path, strict=True, heal=True,
+                       validation_rules=task_validation)
     else:
         filtered_path = output_path
 
@@ -366,6 +385,7 @@ def import_from_huggingface(
     repo_id: str,
     hf_token: str | None = None,
     split: str | None = None,
+    cancel_event=None,
 ):
     """Import a dataset from HuggingFace Hub and convert to our JSONL format."""
     print(f"Importing dataset from HuggingFace: {repo_id}")

@@ -50,6 +50,20 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     if not datasets and not papers and not qa_pairs:
         return {"nodes": [], "links": [], "clusters": []}
 
+    # ── Pre-build lookup dicts (O(n) instead of O(n²)) ──
+    papers_by_dataset: dict[int, list] = defaultdict(list)
+    for p in papers:
+        if p.dataset_id:
+            papers_by_dataset[p.dataset_id].append(p)
+
+    qa_by_dataset: dict[int, list] = defaultdict(list)
+    qa_by_paper: dict[int, list] = defaultdict(list)
+    for qa in qa_pairs:
+        if qa.dataset_id:
+            qa_by_dataset[qa.dataset_id].append(qa)
+        if qa.paper_id:
+            qa_by_paper[qa.paper_id].append(qa)
+
     # Extract keywords and build paper keyword map
     paper_keywords: dict[int, list[str]] = {}
     for p in papers:
@@ -63,7 +77,7 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
 
     for i, ds in enumerate(datasets):
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-        ds_papers = [p for p in papers if p.dataset_id == ds.id]
+        ds_papers = papers_by_dataset[ds.id]
         cluster_infos.append({
             "id": i,
             "label": ds.topic[:30] if ds.topic else f"Dataset {ds.id}",
@@ -94,8 +108,8 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
     for ds in datasets:
         cid = dataset_cluster.get(ds.id, 0)
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
-        ds_qa_count = sum(1 for qa in qa_pairs if qa.dataset_id == ds.id)
-        ds_paper_count = sum(1 for p in papers if p.dataset_id == ds.id)
+        ds_qa_count = len(qa_by_dataset[ds.id])
+        ds_paper_count = len(papers_by_dataset[ds.id])
         size = 12 + math.log2(ds_qa_count + 1) * 3
         nodes.append({
             "id": f"dataset-{ds.id}",
@@ -179,8 +193,8 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
                 "type": "dataset_qa",
             })
 
-    # Shared keyword links between papers
-    paper_list = list(papers)
+    # Shared keyword links between papers (cap at 200 papers to avoid O(n²) blowup)
+    paper_list = list(papers[:200])
     for i in range(len(paper_list)):
         for j in range(i + 1, len(paper_list)):
             p1 = paper_list[i]

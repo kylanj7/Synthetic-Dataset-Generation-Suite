@@ -2,6 +2,42 @@ import { useCallback, useRef, useEffect, useState } from 'react'
 import ForceGraph3D from 'react-force-graph-3d'
 import * as THREE from 'three'
 
+// --- Shared geometries (created once, reused by all nodes) ---
+const SHARED_GEO = {
+  qa: new THREE.OctahedronGeometry(1, 0),
+  paper: new THREE.SphereGeometry(1, 8, 6),
+  dataset: new THREE.IcosahedronGeometry(1, 1),
+  datasetWire: new THREE.IcosahedronGeometry(1.15, 1),
+}
+
+// --- Material cache ---
+const _matCache = new Map<string, THREE.Material>()
+
+function getMaterial(
+  kind: 'basic' | 'phong',
+  color: string,
+  opacity: number,
+  emissiveIntensity = 0,
+  extra: Record<string, any> = {},
+): THREE.Material {
+  const key = `${kind}|${color}|${opacity}|${emissiveIntensity}|${JSON.stringify(extra)}`
+  let mat = _matCache.get(key)
+  if (!mat) {
+    if (kind === 'basic') {
+      mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, ...extra })
+    } else {
+      mat = new THREE.MeshPhongMaterial({
+        color, transparent: true, opacity,
+        emissive: color, emissiveIntensity, ...extra,
+      })
+    }
+    _matCache.set(key, mat)
+  }
+  return mat
+}
+
+const PERF_THRESHOLD = 500
+
 interface Props {
   nodes: any[]
   links: any[]
@@ -13,6 +49,7 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
   const fgRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const isLarge = nodes.length > PERF_THRESHOLD
 
   useEffect(() => {
     const updateSize = () => {
@@ -50,79 +87,57 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
     const opacity = dimmed ? 0.15 : 1
 
     if (node.type === 'dataset') {
-      // Icosahedron for datasets (gem-like)
-      const geometry = new THREE.IcosahedronGeometry(size, 1)
-      const material = new THREE.MeshPhongMaterial({
-        color: nodeColor,
-        transparent: true,
-        opacity,
-        emissive: nodeColor,
-        emissiveIntensity: 0.6,
-        shininess: 100,
-      })
-      const mesh = new THREE.Mesh(geometry, material)
+      const mat = getMaterial('phong', nodeColor, opacity, 0.6, { shininess: 100 })
+      const mesh = new THREE.Mesh(SHARED_GEO.dataset, mat)
+      mesh.scale.setScalar(size)
 
       // Wireframe overlay
-      const wireGeo = new THREE.IcosahedronGeometry(size * 1.15, 1)
-      const wireMat = new THREE.MeshBasicMaterial({
-        color: '#ffffff',
-        wireframe: true,
-        transparent: true,
-        opacity: opacity * 0.25,
-      })
-      mesh.add(new THREE.Mesh(wireGeo, wireMat))
+      const wireMat = getMaterial('basic', '#ffffff', opacity * 0.25, 0, { wireframe: true })
+      const wire = new THREE.Mesh(SHARED_GEO.datasetWire, wireMat)
+      wire.scale.setScalar(1)  // already scaled relative to parent
+      mesh.add(wire)
 
-      // Glow sprite
-      const spriteMat = new THREE.SpriteMaterial({
-        map: createGlowTexture(color),
-        transparent: true,
-        opacity: opacity * 0.4,
-        blending: THREE.AdditiveBlending,
-      })
-      const sprite = new THREE.Sprite(spriteMat)
-      sprite.scale.set(size * 6, size * 6, 1)
-      mesh.add(sprite)
+      if (!isLarge) {
+        const spriteMat = new THREE.SpriteMaterial({
+          map: createGlowTexture(color),
+          transparent: true,
+          opacity: opacity * 0.4,
+          blending: THREE.AdditiveBlending,
+        })
+        const sprite = new THREE.Sprite(spriteMat)
+        sprite.scale.set(6, 6, 1)
+        mesh.add(sprite)
+      }
 
       return mesh
     }
 
     if (node.type === 'paper') {
-      // Sphere for papers
-      const geometry = new THREE.SphereGeometry(size, 16, 12)
-      const material = new THREE.MeshPhongMaterial({
-        color: nodeColor,
-        transparent: true,
-        opacity,
-        emissive: nodeColor,
-        emissiveIntensity: 0.3,
-      })
-      const mesh = new THREE.Mesh(geometry, material)
+      const mat = getMaterial('phong', nodeColor, opacity, 0.3)
+      const mesh = new THREE.Mesh(SHARED_GEO.paper, mat)
+      mesh.scale.setScalar(size)
 
-      // Glow sprite
-      const spriteMat = new THREE.SpriteMaterial({
-        map: createGlowTexture(color),
-        transparent: true,
-        opacity: opacity * 0.3,
-        blending: THREE.AdditiveBlending,
-      })
-      const sprite = new THREE.Sprite(spriteMat)
-      sprite.scale.set(size * 5, size * 5, 1)
-      mesh.add(sprite)
+      if (!isLarge) {
+        const spriteMat = new THREE.SpriteMaterial({
+          map: createGlowTexture(color),
+          transparent: true,
+          opacity: opacity * 0.3,
+          blending: THREE.AdditiveBlending,
+        })
+        const sprite = new THREE.Sprite(spriteMat)
+        sprite.scale.set(5, 5, 1)
+        mesh.add(sprite)
+      }
 
       return mesh
     }
 
-    // QA nodes: small octahedron
-    const geometry = new THREE.OctahedronGeometry(size, 0)
-    const material = new THREE.MeshPhongMaterial({
-      color: nodeColor,
-      transparent: true,
-      opacity,
-      emissive: nodeColor,
-      emissiveIntensity: 0.2,
-    })
-    return new THREE.Mesh(geometry, material)
-  }, [searchQuery])
+    // QA nodes: flat material — no lighting needed for small abundant nodes
+    const mat = getMaterial('basic', nodeColor, opacity)
+    const mesh = new THREE.Mesh(SHARED_GEO.qa, mat)
+    mesh.scale.setScalar(size)
+    return mesh
+  }, [searchQuery, isLarge])
 
   // Tooltip
   const getNodeLabel = useCallback((node: any) => {
@@ -167,9 +182,9 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
             if (link.type === 'keyword') return 'rgba(255, 214, 102, 0.12)'
             return 'rgba(126, 184, 255, 0.08)'
           }}
-          linkWidth={(link: any) => link.weight * 1.5}
+          linkWidth={isLarge ? 1 : ((link: any) => link.weight * 1.5)}
           linkOpacity={0.6}
-          linkDirectionalParticles={(link: any) =>
+          linkDirectionalParticles={isLarge ? 0 : (link: any) =>
             ['paper_qa', 'dataset_paper', 'dataset_qa'].includes(link.type) ? 2 : 0
           }
           linkDirectionalParticleWidth={1.5}
@@ -179,9 +194,10 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
           }}
           onNodeClick={onNodeClick}
           nodeLabel={getNodeLabel}
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          cooldownTicks={100}
+          warmupTicks={isLarge ? 60 : 0}
+          d3AlphaDecay={isLarge ? 0.05 : 0.02}
+          d3VelocityDecay={isLarge ? 0.4 : 0.3}
+          cooldownTicks={isLarge ? 60 : 100}
           backgroundColor="#06060f"
           showNavInfo={false}
         />

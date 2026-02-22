@@ -16,8 +16,31 @@ from ..db.models import Dataset
 _executor = ThreadPoolExecutor(max_workers=2)
 _job_queues: dict[int, queue.Queue] = {}
 _job_futures: dict[int, object] = {}
+_job_logs: dict[int, list[dict]] = {}
 _cancel_flags: dict[int, threading.Event] = {}
+_job_clients: dict[int, object] = {}  # openai client refs for force-close on cancel
 _lock = threading.Lock()
+
+
+def _emit(dataset_id: int, q: queue.Queue, item: dict):
+    """Append to persistent log buffer and push to the live queue."""
+    with _lock:
+        if dataset_id not in _job_logs:
+            _job_logs[dataset_id] = []
+        _job_logs[dataset_id].append(item)
+    q.put(item)
+
+
+def get_job_logs(dataset_id: int) -> list[dict]:
+    """Return a snapshot of the stored log buffer for a dataset."""
+    with _lock:
+        return list(_job_logs.get(dataset_id, []))
+
+
+def register_job_client(dataset_id: int, client):
+    """Store a reference to the LLM client so cancel_job() can close it."""
+    with _lock:
+        _job_clients[dataset_id] = client
 
 
 class StdoutCapture(io.TextIOBase):
@@ -34,12 +57,12 @@ class StdoutCapture(io.TextIOBase):
         self._buffer += s
         while "\n" in self._buffer:
             line, self._buffer = self._buffer.split("\n", 1)
-            self.q.put({"type": "log", "data": line})
+            _emit(self.dataset_id, self.q, {"type": "log", "data": line})
         return len(s)
 
     def flush(self):
         if self._buffer:
-            self.q.put({"type": "log", "data": self._buffer})
+            _emit(self.dataset_id, self.q, {"type": "log", "data": self._buffer})
             self._buffer = ""
 
 
@@ -51,8 +74,13 @@ def get_job_queue(dataset_id: int) -> queue.Queue | None:
 def submit_job(ds_id: int, run_fn, **kwargs):
     """Submit a dataset pipeline for background execution."""
     q = queue.Queue()
+    cancel_event = threading.Event()
     with _lock:
         _job_queues[ds_id] = q
+        _cancel_flags[ds_id] = cancel_event
+
+    # Inject cancel_event so pipeline functions can check it
+    kwargs["cancel_event"] = cancel_event
 
     future = _executor.submit(_run_job, ds_id, q, run_fn, kwargs)
     with _lock:
@@ -61,25 +89,52 @@ def submit_job(ds_id: int, run_fn, **kwargs):
 
 
 def cancel_job(dataset_id: int) -> bool:
-    """Attempt to cancel a running dataset pipeline."""
+    """Cancel a running dataset pipeline.
+
+    Sets the cancel flag (checked at iteration boundaries) and closes the
+    LLM client to abort any in-flight HTTP request to Ollama/etc.
+    """
     with _lock:
+        cancel_event = _cancel_flags.get(dataset_id)
         future = _job_futures.get(dataset_id)
-    if future and future.cancel():
-        db = SessionLocal()
+        client = _job_clients.pop(dataset_id, None)
+
+    if not cancel_event and not future:
+        return False
+
+    # 1. Signal cooperative cancellation
+    if cancel_event:
+        cancel_event.set()
+
+    # 2. Force-close the LLM client to abort in-flight requests
+    if client and hasattr(client, "close"):
         try:
-            ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-            if ds:
-                ds.status = "cancelled"
-                ds.completed_at = datetime.datetime.utcnow()
-                db.commit()
-        finally:
-            db.close()
-        q = get_job_queue(dataset_id)
-        if q:
-            q.put({"type": "status", "data": "cancelled"})
-            q.put(None)  # sentinel
-        return True
-    return False
+            client.close()
+        except Exception:
+            pass
+
+    # 3. Try cancelling the future (only works if not yet started)
+    if future:
+        future.cancel()
+
+    # 4. Mark DB as cancelled (the running thread will also detect this,
+    #    but we do it here for immediate UI feedback)
+    db = SessionLocal()
+    try:
+        ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+        if ds and ds.status not in ("completed", "failed", "cancelled"):
+            ds.status = "cancelled"
+            ds.completed_at = datetime.datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+    q = get_job_queue(dataset_id)
+    if q:
+        _emit(dataset_id, q, {"type": "status", "data": "cancelled"})
+        q.put(None)  # sentinel
+
+    return True
 
 
 def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
@@ -96,7 +151,7 @@ def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
         ds.status = "running"
         ds.started_at = datetime.datetime.utcnow()
         db.commit()
-        q.put({"type": "status", "data": "running"})
+        _emit(dataset_id, q, {"type": "status", "data": "running"})
 
         # Redirect stdout
         sys.stdout = capture
@@ -200,25 +255,38 @@ def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
         )
         db.commit()
 
-        q.put({"type": "status", "data": "completed"})
+        _emit(dataset_id, q, {"type": "status", "data": "completed"})
 
     except Exception as e:
         sys.stdout = old_stdout
         capture.flush()
-        tb = traceback.format_exc()
+
+        # Check if this was a cancellation (flag set by cancel_job)
+        with _lock:
+            cancel_event = _cancel_flags.get(dataset_id)
+        was_cancelled = cancel_event and cancel_event.is_set()
 
         ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-        if ds:
-            ds.status = "failed"
-            ds.completed_at = datetime.datetime.utcnow()
-            ds.error_message = str(e)
-            if ds.started_at:
-                ds.duration_seconds = (ds.completed_at - ds.started_at).total_seconds()
-            db.commit()
-
-        q.put({"type": "error", "data": str(e)})
-        q.put({"type": "log", "data": tb})
-        q.put({"type": "status", "data": "failed"})
+        if ds and ds.status not in ("cancelled",):
+            if was_cancelled:
+                ds.status = "cancelled"
+                ds.completed_at = datetime.datetime.utcnow()
+                if ds.started_at:
+                    ds.duration_seconds = (ds.completed_at - ds.started_at).total_seconds()
+                db.commit()
+                _emit(dataset_id, q, {"type": "log", "data": "Job cancelled by user"})
+                _emit(dataset_id, q, {"type": "status", "data": "cancelled"})
+            else:
+                tb = traceback.format_exc()
+                ds.status = "failed"
+                ds.completed_at = datetime.datetime.utcnow()
+                ds.error_message = str(e)
+                if ds.started_at:
+                    ds.duration_seconds = (ds.completed_at - ds.started_at).total_seconds()
+                db.commit()
+                _emit(dataset_id, q, {"type": "error", "data": str(e)})
+                _emit(dataset_id, q, {"type": "log", "data": tb})
+                _emit(dataset_id, q, {"type": "status", "data": "failed"})
 
     finally:
         sys.stdout = old_stdout
@@ -232,6 +300,9 @@ def _run_job(dataset_id: int, q: queue.Queue, run_fn, kwargs: dict):
             with _lock:
                 _job_queues.pop(dataset_id, None)
                 _job_futures.pop(dataset_id, None)
+                _job_logs.pop(dataset_id, None)
+                _cancel_flags.pop(dataset_id, None)
+                _job_clients.pop(dataset_id, None)
 
         threading.Thread(target=_cleanup, daemon=True).start()
 

@@ -65,6 +65,26 @@ def _rate_limit(source: str, delay: float):
     _last_request[source] = time.time()
 
 
+# ── Language detection ─────────────────────────────────────────────────
+
+# Characters outside Basic Latin + Latin Extended suggest non-English text
+_NON_LATIN_RE = re.compile(r"[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF\u0900-\u097F]")
+# Common English articles/prepositions — if none appear, likely not English
+_ENGLISH_MARKERS = re.compile(r"\b(?:the|of|and|in|for|is|to|a|an|with|from|by|on|are|was|that|this)\b", re.I)
+
+
+def _is_english(text: str) -> bool:
+    """Heuristic check: returns True if text appears to be in English."""
+    if not text or len(text) < 20:
+        return True  # too short to judge, keep it
+    # Reject if significant non-Latin script present
+    non_latin = len(_NON_LATIN_RE.findall(text))
+    if non_latin > len(text) * 0.05:
+        return False
+    # Must contain some common English words
+    return bool(_ENGLISH_MARKERS.search(text))
+
+
 # ── Paper search ───────────────────────────────────────────────────────
 
 def _search_arxiv(topic: str, max_results: int) -> list[dict]:
@@ -175,6 +195,7 @@ def search_papers(topic: str, max_results: int = 20) -> list[dict]:
     seen_ids = set()
     seen_titles = set()
     merged = []
+    skipped_lang = 0
 
     for paper in arxiv_papers + s2_papers:
         pid = paper["paper_id"]
@@ -182,6 +203,13 @@ def search_papers(topic: str, max_results: int = 20) -> list[dict]:
 
         if pid in seen_ids or title_key in seen_titles:
             continue
+
+        # Filter non-English papers
+        check_text = f"{paper.get('title', '')} {paper.get('abstract', '')}"
+        if not _is_english(check_text):
+            skipped_lang += 1
+            continue
+
         seen_ids.add(pid)
         seen_titles.add(title_key)
         merged.append(paper)
@@ -192,6 +220,8 @@ def search_papers(topic: str, max_results: int = 20) -> list[dict]:
     # Trim to max_results
     merged = merged[:max_results]
     print(f"  Merged (deduplicated): {len(merged)} papers")
+    if skipped_lang:
+        print(f"  Filtered out {skipped_lang} non-English papers")
     return merged
 
 
@@ -460,9 +490,13 @@ def _make_qa_call(
     max_retries: int,
     paper: dict,
     token_tracker: TokenTracker | None = None,
+    cancel_event=None,
 ) -> list[dict]:
     """Make a single LLM call to generate Q&A pairs and parse the result."""
     for attempt in range(1, max_retries + 1):
+        if cancel_event and cancel_event.is_set():
+            raise RuntimeError("Job cancelled")
+
         try:
             kwargs = dict(
                 model=model,
@@ -478,6 +512,9 @@ def _make_qa_call(
 
             response = client.chat.completions.create(**kwargs)
 
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("Job cancelled")
+
             if token_tracker and hasattr(response, "usage"):
                 token_tracker.update(response.usage)
 
@@ -492,6 +529,8 @@ def _make_qa_call(
                 time.sleep(1)
 
         except Exception as e:
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("Job cancelled")
             print(f"    Attempt {attempt} error: {e}")
             if attempt < max_retries:
                 time.sleep(2)
@@ -507,6 +546,7 @@ def generate_qa_for_paper(
     paper: dict,
     token_tracker: TokenTracker | None = None,
     max_tokens: int = 8192,
+    cancel_event=None,
 ) -> list[dict]:
     """Generate Q&A pairs for a single paper using the LLM.
 
@@ -522,6 +562,7 @@ def generate_qa_for_paper(
         paper: Paper metadata dict with full_text or abstract.
         token_tracker: Optional tracker to accumulate usage.
         max_tokens: Max tokens for LLM response (default 8192).
+        cancel_event: threading.Event set when job is cancelled.
 
     Returns:
         List of Q&A dicts.
@@ -546,6 +587,9 @@ def generate_qa_for_paper(
         all_pairs: list[dict] = []
 
         for i, chunk in enumerate(chunks):
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("Job cancelled")
+
             count_hint = (
                 f"\n\nGenerate 3-4 Q&A pairs from this section "
                 f"(section {i + 1}/{len(chunks)} of the paper)."
@@ -561,6 +605,7 @@ def generate_qa_for_paper(
             pairs = _make_qa_call(
                 client, model, api_params, chunk_system, user_msg,
                 temperature, max_tokens, max_retries, paper, token_tracker,
+                cancel_event=cancel_event,
             )
             all_pairs.extend(pairs)
             if pairs:
@@ -588,6 +633,7 @@ def generate_qa_for_paper(
     return _make_qa_call(
         client, model, api_params, adjusted_system, user_msg,
         temperature, max_tokens, max_retries, paper, token_tracker,
+        cancel_event=cancel_event,
     )
 
 
@@ -606,6 +652,7 @@ def run_scrape(
     system_prompt: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    cancel_event=None,
 ):
     """Orchestrate the full scrape pipeline.
 
@@ -660,13 +707,12 @@ def run_scrape(
 
     print(f"\nFull text obtained for {full_text_count}/{top_n} papers")
     abstract_count = sum(1 for p in papers if p.get("abstract") and not p.get("full_text"))
-    print(f"Abstract-only papers: {abstract_count}")
+    if abstract_count:
+        print(f"Skipping {abstract_count} abstract-only papers (full text required)")
 
-    # Filter out papers with no content at all
-    papers_with_content = [
-        p for p in papers if p.get("full_text") or p.get("abstract")
-    ]
-    print(f"Papers with usable content: {len(papers_with_content)}")
+    # Only use papers with full text — abstracts are too shallow for quality Q&A
+    papers_with_content = [p for p in papers if p.get("full_text")]
+    print(f"Papers with full text: {len(papers_with_content)}")
 
     if not papers_with_content:
         raise RuntimeError("No papers with extractable content (no abstracts or full text available).")
@@ -699,6 +745,16 @@ def run_scrape(
     client, model_name, extra_params = get_client(provider, model=model, api_key=api_key)
     rate_delay = extra_params.get("_rate_limit_delay", 0)
 
+    # Register client so cancel_job() can close it to abort in-flight requests
+    try:
+        from .web.services.job_runner import register_job_client
+        # dataset_id is encoded in the output_path filename: {topic}_{dataset_id}.jsonl
+        _ds_id_match = re.search(r'_(\d+)\.jsonl$', output_path)
+        if _ds_id_match:
+            register_job_client(int(_ds_id_match.group(1)), client)
+    except ImportError:
+        pass  # CLI usage without web server
+
     print(f"\nProvider: {provider} | Model: {model_name}")
     print(f"Generating Q&A from {len(papers_with_content)} papers...")
     print("=" * 60)
@@ -715,6 +771,10 @@ def run_scrape(
     citations = []
 
     for i, paper in enumerate(papers_with_content):
+        if cancel_event and cancel_event.is_set():
+            print("\nJob cancelled by user")
+            break
+
         title_short = paper["title"][:60]
         content_type = "full text" if paper.get("full_text") else "abstract"
         print(f"\n[{i+1}/{len(papers_with_content)}] {title_short}... ({content_type})")
@@ -722,6 +782,7 @@ def run_scrape(
         pairs = generate_qa_for_paper(
             client, model_name, extra_params, task_config, paper, token_tracker,
             max_tokens=effective_max_tokens,
+            cancel_event=cancel_event,
         )
 
         if pairs:
