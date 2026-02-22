@@ -56,12 +56,17 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
         if p.dataset_id:
             papers_by_dataset[p.dataset_id].append(p)
 
-    # Count QA pairs per paper and per dataset (for sizing, not for nodes)
+    # Group QA pairs by paper and by dataset (dataset-only = no paper link)
+    qa_by_paper: dict[int, list] = defaultdict(list)
+    qa_by_dataset_only: dict[int, list] = defaultdict(list)
     qa_count_by_paper: dict[int, int] = defaultdict(int)
     qa_count_by_dataset: dict[int, int] = defaultdict(int)
     for qa in qa_pairs:
         if qa.paper_id:
+            qa_by_paper[qa.paper_id].append(qa)
             qa_count_by_paper[qa.paper_id] += 1
+        elif qa.dataset_id:
+            qa_by_dataset_only[qa.dataset_id].append(qa)
         if qa.dataset_id:
             qa_count_by_dataset[qa.dataset_id] += 1
 
@@ -147,8 +152,65 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
             "qa_pair_count": qa_count,
         })
 
+    # Sample QA nodes + links — up to 2 per paper/dataset, capped at 150 total
+    qa_sample_links = []
+    qa_nodes_added = 0
+    MAX_QA_NODES = 150
+
+    # QAs linked through papers
+    for p in papers:
+        if qa_nodes_added >= MAX_QA_NODES:
+            break
+        cid = paper_cluster.get(p.id, 0)
+        color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#6ee7d8"
+        for qa in qa_by_paper[p.id][:2]:
+            nodes.append({
+                "id": f"qa-{qa.id}",
+                "type": "qa",
+                "label": (qa.instruction or "")[:50],
+                "size": 2.5,
+                "color": color,
+                "cluster": cid,
+                "instruction": qa.instruction,
+                "answer_text": qa.answer_text or (qa.output or "")[:200],
+                "is_valid": qa.is_valid,
+            })
+            qa_sample_links.append({
+                "source": f"paper-{p.id}",
+                "target": f"qa-{qa.id}",
+                "weight": 0.3,
+                "type": "paper_qa",
+            })
+            qa_nodes_added += 1
+
+    # QAs linked directly to datasets (no paper, e.g. HF imports)
+    for ds in datasets:
+        if qa_nodes_added >= MAX_QA_NODES:
+            break
+        cid = dataset_cluster.get(ds.id, 0)
+        color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#6ee7d8"
+        for qa in qa_by_dataset_only[ds.id][:4]:
+            nodes.append({
+                "id": f"qa-{qa.id}",
+                "type": "qa",
+                "label": (qa.instruction or "")[:50],
+                "size": 2.5,
+                "color": color,
+                "cluster": cid,
+                "instruction": qa.instruction,
+                "answer_text": qa.answer_text or (qa.output or "")[:200],
+                "is_valid": qa.is_valid,
+            })
+            qa_sample_links.append({
+                "source": f"dataset-{ds.id}",
+                "target": f"qa-{qa.id}",
+                "weight": 0.2,
+                "type": "dataset_qa",
+            })
+            qa_nodes_added += 1
+
     # Build links
-    links = []
+    links = list(qa_sample_links)
 
     # Dataset -> Paper links
     for p in papers:

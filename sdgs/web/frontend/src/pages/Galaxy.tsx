@@ -1,15 +1,16 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useMemo } from 'react'
 import { useGalaxyStore } from '../store/galaxyStore'
 import { useGalaxyGraph } from '../hooks/useGalaxyGraph'
 import GalaxyCanvas from '../components/galaxy/GalaxyCanvas'
 import GalaxyControls from '../components/galaxy/GalaxyControls'
 import GalaxyLegend from '../components/galaxy/GalaxyLegend'
 import PaperDetailPanel from '../components/galaxy/PaperDetail'
+import DatasetDetailPanel from '../components/galaxy/DatasetDetail'
 
 export default function Galaxy() {
   const {
-    data, selectedPaper, loading, error, searchQuery, activeCluster,
-    fetchData, selectPaper, clearSelection,
+    data, selectedPaper, selectedDatasetNode, loading, error, searchQuery, activeCluster,
+    fetchData, selectPaper, selectDatasetNode, clearSelection,
     setSearchQuery, setActiveCluster,
   } = useGalaxyStore()
 
@@ -19,14 +20,39 @@ export default function Galaxy() {
     fetchData()
   }, [])
 
+  // Papers in the selected dataset's cluster (for the dataset panel)
+  const datasetPapers = useMemo(() => {
+    if (!selectedDatasetNode) return []
+    return graphData.nodes.filter(
+      (n: any) => n.type === 'paper' && n.cluster === selectedDatasetNode.cluster,
+    )
+  }, [selectedDatasetNode, graphData.nodes])
+
   const handleNodeClick = useCallback((node: any) => {
     if (node.type === 'paper') {
       const paperId = parseInt(node.id.replace('paper-', ''))
       selectPaper(paperId, node.id)
     } else if (node.type === 'dataset') {
-      setActiveCluster(activeCluster === node.cluster ? null : node.cluster)
+      if (selectedDatasetNode?.id === node.id) {
+        // Click same dataset again → deselect
+        clearSelection()
+        setActiveCluster(null)
+      } else {
+        selectDatasetNode(node)
+        setActiveCluster(node.cluster)
+      }
     }
-  }, [selectPaper, setActiveCluster, activeCluster])
+  }, [selectPaper, selectDatasetNode, clearSelection, setActiveCluster, selectedDatasetNode])
+
+  const handleDatasetPaperClick = useCallback((paperNode: any) => {
+    const paperId = parseInt(paperNode.id.replace('paper-', ''))
+    selectPaper(paperId, paperNode.id)
+  }, [selectPaper])
+
+  const handleClosePanel = useCallback(() => {
+    clearSelection()
+    if (selectedDatasetNode) setActiveCluster(null)
+  }, [clearSelection, setActiveCluster, selectedDatasetNode])
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: '40px' }}><div className="spinner" /></div>
@@ -77,7 +103,17 @@ export default function Galaxy() {
 
       {/* Paper detail panel */}
       {selectedPaper && (
-        <PaperDetailPanel paper={selectedPaper} onClose={clearSelection} />
+        <PaperDetailPanel paper={selectedPaper} onClose={handleClosePanel} />
+      )}
+
+      {/* Dataset detail panel */}
+      {selectedDatasetNode && !selectedPaper && (
+        <DatasetDetailPanel
+          node={selectedDatasetNode}
+          papers={datasetPapers}
+          onPaperClick={handleDatasetPaperClick}
+          onClose={handleClosePanel}
+        />
       )}
     </div>
   )

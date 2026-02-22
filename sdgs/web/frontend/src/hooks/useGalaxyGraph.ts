@@ -10,7 +10,7 @@ export function useGalaxyGraph() {
     let nodes = [...data.nodes]
     let links = [...data.links]
 
-    // Filter by cluster
+    // Filter by cluster (includes QA nodes in that cluster)
     if (activeCluster !== null) {
       const clusterNodeIds = new Set(
         nodes.filter(n => n.cluster === activeCluster).map(n => n.id)
@@ -23,13 +23,28 @@ export function useGalaxyGraph() {
       })
     }
 
-    // Inject QA nodes for expanded paper
+    // Expand QA nodes for selected paper
     if (selectedPaper && expandedPaperGraphId) {
       const paperNode = nodes.find(n => n.id === expandedPaperGraphId)
       if (paperNode) {
-        // Mark paper as expanded (so canvas can skip its cloud particles)
         ;(paperNode as any)._expanded = true
 
+        // Remove sample QAs already linked to this paper (backend sends 2)
+        const sampleQaIds = new Set<string>()
+        for (const l of links) {
+          const src = typeof l.source === 'string' ? l.source : (l.source as any).id
+          const tgt = typeof l.target === 'string' ? l.target : (l.target as any).id
+          if (src === expandedPaperGraphId && l.type === 'paper_qa') {
+            sampleQaIds.add(tgt)
+          }
+        }
+        nodes = nodes.filter(n => !sampleQaIds.has(n.id))
+        links = links.filter(l => {
+          const tgt = typeof l.target === 'string' ? l.target : (l.target as any).id
+          return !sampleQaIds.has(tgt)
+        })
+
+        // Inject all QAs from the fetched paper detail
         const qas = selectedPaper.qa_pairs.slice(0, 30)
         for (let i = 0; i < qas.length; i++) {
           const qa = qas[i]
@@ -54,7 +69,7 @@ export function useGalaxyGraph() {
       }
     }
 
-    // Search highlighting (add a `_match` flag)
+    // Search highlighting
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       nodes = nodes.map(n => ({

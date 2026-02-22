@@ -412,23 +412,27 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
           nodeThreeObjectExtend={false}
           linkColor={(link: any) => {
             if (link.type === 'dataset_paper') return 'rgba(126, 184, 255, 0.25)'
-            if (link.type === 'paper_qa') return 'rgba(110, 231, 216, 0.2)'
+            if (link.type === 'paper_qa' || link.type === 'dataset_qa') return 'rgba(110, 231, 216, 0.2)'
             if (link.type === 'keyword') return 'rgba(255, 214, 102, 0.15)'
             return 'rgba(126, 184, 255, 0.1)'
           }}
-          linkWidth={(link: any) => link.type === 'paper_qa' ? 0.8 : link.weight * 2}
+          linkWidth={(link: any) =>
+            link.type === 'paper_qa' || link.type === 'dataset_qa' ? 0.8 : link.weight * 2
+          }
           linkOpacity={0.7}
           linkDirectionalParticles={(link: any) =>
             link.type === 'dataset_paper' ? 3
-              : link.type === 'paper_qa' ? 2
+              : link.type === 'paper_qa' || link.type === 'dataset_qa' ? 2
               : link.type === 'keyword' ? 2
               : 0
           }
-          linkDirectionalParticleWidth={(link: any) => link.type === 'paper_qa' ? 1.2 : 1.8}
+          linkDirectionalParticleWidth={(link: any) =>
+            link.type === 'paper_qa' || link.type === 'dataset_qa' ? 1.2 : 1.8
+          }
           linkDirectionalParticleSpeed={0.006}
           linkDirectionalParticleColor={(link: any) => {
             if (link.type === 'dataset_paper') return '#7eb8ff'
-            if (link.type === 'paper_qa') return '#6ee7d8'
+            if (link.type === 'paper_qa' || link.type === 'dataset_qa') return '#6ee7d8'
             return '#ffd666'
           }}
           onNodeClick={onNodeClick}

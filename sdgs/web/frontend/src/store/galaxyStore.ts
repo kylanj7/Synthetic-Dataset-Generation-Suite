@@ -5,6 +5,7 @@ interface GalaxyStore {
   data: GalaxyData | null
   selectedPaper: PaperDetail | null
   expandedPaperGraphId: string | null
+  selectedDatasetNode: any | null
   loading: boolean
   error: string | null
   searchQuery: string
@@ -12,6 +13,7 @@ interface GalaxyStore {
 
   fetchData: () => Promise<void>
   selectPaper: (paperId: number, graphId: string) => Promise<void>
+  selectDatasetNode: (node: any) => void
   clearSelection: () => void
   setSearchQuery: (q: string) => void
   setActiveCluster: (id: number | null) => void
@@ -21,6 +23,7 @@ export const useGalaxyStore = create<GalaxyStore>((set) => ({
   data: null,
   selectedPaper: null,
   expandedPaperGraphId: null,
+  selectedDatasetNode: null,
   loading: false,
   error: null,
   searchQuery: '',
@@ -37,7 +40,7 @@ export const useGalaxyStore = create<GalaxyStore>((set) => ({
   },
 
   selectPaper: async (paperId: number, graphId: string) => {
-    set({ expandedPaperGraphId: graphId })
+    set({ expandedPaperGraphId: graphId, selectedDatasetNode: null })
     try {
       const detail = await getPaperDetail(paperId)
       set({ selectedPaper: detail })
@@ -46,7 +49,17 @@ export const useGalaxyStore = create<GalaxyStore>((set) => ({
     }
   },
 
-  clearSelection: () => set({ selectedPaper: null, expandedPaperGraphId: null }),
+  selectDatasetNode: (node) => set({
+    selectedDatasetNode: node,
+    selectedPaper: null,
+    expandedPaperGraphId: null,
+  }),
+
+  clearSelection: () => set({
+    selectedPaper: null,
+    expandedPaperGraphId: null,
+    selectedDatasetNode: null,
+  }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setActiveCluster: (id) => set({ activeCluster: id }),
 }))
