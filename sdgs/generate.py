@@ -29,6 +29,7 @@ def generate_single(
     validation_rules: dict,
     attempt: int = 1,
     token_tracker: TokenTracker | None = None,
+    max_tokens: int = 4096,
 ) -> tuple[str | None, bool]:
     """
     Generate a single reasoning response and validate it.
@@ -47,6 +48,7 @@ def generate_single(
                 {"role": "user", "content": user_msg},
             ],
             temperature=temperature,
+            max_tokens=max_tokens,
         )
         if api_params:
             kwargs["extra_body"] = api_params
@@ -77,6 +79,7 @@ def run_generation(
     input_data: list[dict],
     output_path: str,
     resume: bool = True,
+    max_tokens: int = 4096,
 ):
     """
     Run full dataset generation.
@@ -138,6 +141,7 @@ def run_generation(
                     client, model, extra_params, system_prompt, user_msg,
                     temperature, validation_rules, attempt,
                     token_tracker=token_tracker,
+                    max_tokens=max_tokens,
                 )
                 if output:
                     best_output = output
@@ -185,6 +189,7 @@ def run_test(
     task_config: dict,
     input_data: list[dict],
     num_samples: int = 5,
+    max_tokens: int = 4096,
 ):
     """
     Test mode — generate a few samples with detailed validation output.
@@ -227,6 +232,7 @@ def run_test(
             client, model, extra_params, system_prompt, user_msg,
             temperature, validation_rules,
             token_tracker=token_tracker,
+            max_tokens=max_tokens,
         )
         elapsed = time.time() - start
 

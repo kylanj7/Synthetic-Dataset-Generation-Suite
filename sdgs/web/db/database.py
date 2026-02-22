@@ -24,6 +24,11 @@ def _migrate(eng):
         if "pdf_path" not in columns:
             with eng.begin() as conn:
                 conn.execute(text("ALTER TABLE papers ADD COLUMN pdf_path VARCHAR(500)"))
+    if insp.has_table("datasets"):
+        columns = {c["name"] for c in insp.get_columns("datasets")}
+        if "max_tokens" not in columns:
+            with eng.begin() as conn:
+                conn.execute(text("ALTER TABLE datasets ADD COLUMN max_tokens INTEGER"))
 
 
 def get_db():

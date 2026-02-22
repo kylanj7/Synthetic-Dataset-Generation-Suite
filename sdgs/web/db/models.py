@@ -53,6 +53,7 @@ class Dataset(Base):
     citations_path = Column(String(500), nullable=True)
     system_prompt = Column(Text, nullable=True)
     temperature = Column(Float, default=0.7)
+    max_tokens = Column(Integer, nullable=True)
 
     hf_repo = Column(String(500), nullable=True)
 

@@ -5,3 +5,4 @@ default_model: "nemotron-3-nano:latest"
 rate_limit_delay: 0
 extra_params:
   num_ctx: 16384
+  num_predict: 4096
