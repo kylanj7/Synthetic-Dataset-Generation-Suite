@@ -248,3 +248,107 @@ class PaperDetail(BaseModel):
     citation_count: int = 0
     url: str | None = None
     qa_pairs: list[QAPairResponse] = []
+
+
+# --- Training schemas ---
+
+class StartTrainingRequest(BaseModel):
+    dataset_id: int | None = None
+    dataset_path: str | None = None
+    base_model: str = "Qwen/Qwen2.5-14B-Instruct"
+    model_size: str = "14B"
+    lora_rank: int = 16
+    lora_alpha: int = 16
+    learning_rate: float = 5e-5
+    num_epochs: int = 1
+    batch_size: int = 4
+    gradient_accumulation_steps: int = 4
+    max_steps: int = -1
+
+
+class TrainingRunResponse(BaseModel):
+    id: int
+    run_name: str
+    status: str
+    dataset_id: int | None = None
+    base_model: str | None = None
+    model_size: str | None = None
+    lora_rank: int = 16
+    lora_alpha: int = 16
+    learning_rate: float = 5e-5
+    num_epochs: int = 1
+    batch_size: int = 4
+    gradient_accumulation_steps: int = 4
+    max_steps: int = -1
+    dataset_path: str | None = None
+    train_samples: int = 0
+    val_samples: int = 0
+    test_samples: int = 0
+    adapter_path: str | None = None
+    output_dir: str | None = None
+    final_loss: float | None = None
+    total_steps: int | None = None
+    training_runtime_seconds: float | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float = 0.0
+    error_message: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class TrainingRunListResponse(BaseModel):
+    runs: list[TrainingRunResponse]
+    total: int
+    page: int
+    per_page: int
+
+
+class StartEvaluationRequest(BaseModel):
+    training_run_id: int | None = None
+    model_path: str | None = None
+    test_dataset_path: str | None = None
+    judge_model: str = "gpt-oss:120b"
+    max_samples: int = 50
+
+
+class EvaluationRunResponse(BaseModel):
+    id: int
+    run_name: str
+    status: str
+    training_run_id: int | None = None
+    model_path: str | None = None
+    test_dataset_path: str | None = None
+    judge_model: str | None = None
+    max_samples: int = 50
+    factual_accuracy: float | None = None
+    completeness: float | None = None
+    technical_precision: float | None = None
+    overall_accuracy: float | None = None
+    purity: float | None = None
+    entropy: float | None = None
+    samples_scored: int = 0
+    samples_skipped: int = 0
+    samples_failed: int = 0
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float = 0.0
+    error_message: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class EvaluationRunListResponse(BaseModel):
+    evaluations: list[EvaluationRunResponse]
+    total: int
+    page: int
+    per_page: int
+
+
+class EvaluationDetailResponse(EvaluationRunResponse):
+    per_sample_results: list[dict] | None = None
+    articles_log: list[dict] | None = None

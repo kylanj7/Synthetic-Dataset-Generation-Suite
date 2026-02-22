@@ -128,3 +128,94 @@ class ApiKey(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "provider_name", name="uq_user_provider"),
     )
+
+
+class TrainingRun(Base):
+    __tablename__ = "training_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
+
+    run_name = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+
+    # Model config
+    base_model = Column(String(300), nullable=True)
+    model_size = Column(String(50), nullable=True)
+    lora_rank = Column(Integer, default=16)
+    lora_alpha = Column(Integer, default=16)
+
+    # Training config
+    learning_rate = Column(Float, default=5e-5)
+    num_epochs = Column(Integer, default=1)
+    batch_size = Column(Integer, default=4)
+    gradient_accumulation_steps = Column(Integer, default=4)
+    max_steps = Column(Integer, default=-1)
+
+    # Dataset info
+    dataset_path = Column(String(500), nullable=True)
+    train_samples = Column(Integer, default=0)
+    val_samples = Column(Integer, default=0)
+    test_samples = Column(Integer, default=0)
+
+    # Output
+    adapter_path = Column(String(500), nullable=True)
+    output_dir = Column(String(500), nullable=True)
+
+    # Results
+    final_loss = Column(Float, nullable=True)
+    total_steps = Column(Integer, nullable=True)
+    training_runtime_seconds = Column(Float, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, default=0.0)
+    error_message = Column(Text, nullable=True)
+
+    evaluation_runs = relationship("EvaluationRun", back_populates="training_run", cascade="all, delete-orphan")
+
+
+class EvaluationRun(Base):
+    __tablename__ = "evaluation_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    training_run_id = Column(Integer, ForeignKey("training_runs.id"), nullable=True)
+
+    run_name = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    model_path = Column(String(500), nullable=True)
+    test_dataset_path = Column(String(500), nullable=True)
+    judge_model = Column(String(200), nullable=True)
+    max_samples = Column(Integer, default=50)
+
+    # Judge metrics
+    factual_accuracy = Column(Float, nullable=True)
+    completeness = Column(Float, nullable=True)
+    technical_precision = Column(Float, nullable=True)
+    overall_accuracy = Column(Float, nullable=True)
+
+    # New metrics
+    purity = Column(Float, nullable=True)
+    entropy = Column(Float, nullable=True)
+
+    # Counts
+    samples_scored = Column(Integer, default=0)
+    samples_skipped = Column(Integer, default=0)
+    samples_failed = Column(Integer, default=0)
+
+    # JSON blobs
+    results_json = Column(JSON, nullable=True)
+    articles_json = Column(JSON, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, default=0.0)
+    error_message = Column(Text, nullable=True)
+
+    training_run = relationship("TrainingRun", back_populates="evaluation_runs")

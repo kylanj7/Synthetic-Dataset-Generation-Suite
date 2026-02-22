@@ -37,7 +37,7 @@ app.add_middleware(
 )
 
 # Register API routers
-from .routers import auth, datasets, papers, providers, galaxy, sse, settings  # noqa: E402
+from .routers import auth, datasets, papers, providers, galaxy, sse, settings, training  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
@@ -46,6 +46,7 @@ app.include_router(sse.router, prefix="/api/events", tags=["events"])
 app.include_router(providers.router, prefix="/api", tags=["providers"])
 app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+app.include_router(training.router, prefix="/api/training", tags=["training"])
 
 
 @app.get("/api/health")

@@ -21,6 +21,14 @@ _cancel_flags: dict[int, threading.Event] = {}
 _job_clients: dict[int, object] = {}  # openai client refs for force-close on cancel
 _lock = threading.Lock()
 
+# Training/evaluation job infrastructure (separate pool — only 1 GPU job at a time)
+_training_executor = ThreadPoolExecutor(max_workers=1)
+_training_queues: dict[int, queue.Queue] = {}
+_training_futures: dict[int, object] = {}
+_training_logs: dict[int, list[dict]] = {}
+_training_cancel: dict[int, threading.Event] = {}
+_training_lock = threading.Lock()
+
 
 def _emit(dataset_id: int, q: queue.Queue, item: dict):
     """Append to persistent log buffer and push to the live queue."""
@@ -46,10 +54,11 @@ def register_job_client(dataset_id: int, client):
 class StdoutCapture(io.TextIOBase):
     """Captures stdout writes and pushes lines into a queue."""
 
-    def __init__(self, dataset_id: int, q: queue.Queue):
+    def __init__(self, dataset_id: int, q: queue.Queue, emit_fn=None):
         self.dataset_id = dataset_id
         self.q = q
         self._buffer = ""
+        self._emit_fn = emit_fn or _emit
 
     def write(self, s: str) -> int:
         if not s:
@@ -57,12 +66,12 @@ class StdoutCapture(io.TextIOBase):
         self._buffer += s
         while "\n" in self._buffer:
             line, self._buffer = self._buffer.split("\n", 1)
-            _emit(self.dataset_id, self.q, {"type": "log", "data": line})
+            self._emit_fn(self.dataset_id, self.q, {"type": "log", "data": line})
         return len(s)
 
     def flush(self):
         if self._buffer:
-            _emit(self.dataset_id, self.q, {"type": "log", "data": self._buffer})
+            self._emit_fn(self.dataset_id, self.q, {"type": "log", "data": self._buffer})
             self._buffer = ""
 
 
@@ -330,6 +339,195 @@ def _parse_stats(text: str) -> dict:
     return stats
 
 
+# =====================================================================
+# Training / evaluation job infrastructure
+# =====================================================================
+
+def _training_emit(run_id: int, q: queue.Queue, item: dict):
+    """Append to persistent log buffer and push to the live queue."""
+    with _training_lock:
+        if run_id not in _training_logs:
+            _training_logs[run_id] = []
+        _training_logs[run_id].append(item)
+    q.put(item)
+
+
+def get_training_queue(run_id: int) -> queue.Queue | None:
+    with _training_lock:
+        return _training_queues.get(run_id)
+
+
+def get_training_logs(run_id: int) -> list[dict]:
+    with _training_lock:
+        return list(_training_logs.get(run_id, []))
+
+
+def submit_training_job(run_id: int, run_fn, model_class: str, **kwargs):
+    """Submit a training or evaluation job for background execution.
+
+    *model_class* should be ``"TrainingRun"`` or ``"EvaluationRun"`` so the
+    runner knows which ORM model to update.
+    """
+    q: queue.Queue = queue.Queue()
+    cancel_event = threading.Event()
+    with _training_lock:
+        _training_queues[run_id] = q
+        _training_cancel[run_id] = cancel_event
+
+    kwargs["cancel_event"] = cancel_event
+
+    future = _training_executor.submit(
+        _run_training_job, run_id, q, run_fn, kwargs, model_class,
+    )
+    with _training_lock:
+        _training_futures[run_id] = future
+    return future
+
+
+def cancel_training_job(run_id: int, model_class: str) -> bool:
+    """Cancel a running training/evaluation job."""
+    with _training_lock:
+        cancel_event = _training_cancel.get(run_id)
+        future = _training_futures.get(run_id)
+
+    if not cancel_event and not future:
+        return False
+
+    if cancel_event:
+        cancel_event.set()
+    if future:
+        future.cancel()
+
+    # Immediate DB update
+    from ..db.models import TrainingRun, EvaluationRun
+    ModelCls = TrainingRun if model_class == "TrainingRun" else EvaluationRun
+    db = SessionLocal()
+    try:
+        row = db.query(ModelCls).filter(ModelCls.id == run_id).first()
+        if row and row.status not in ("completed", "failed", "cancelled"):
+            row.status = "cancelled"
+            row.completed_at = datetime.datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+    q = get_training_queue(run_id)
+    if q:
+        _training_emit(run_id, q, {"type": "status", "data": "cancelled"})
+        q.put(None)
+    return True
+
+
+def _run_training_job(
+    run_id: int,
+    q: queue.Queue,
+    run_fn,
+    kwargs: dict,
+    model_class: str,
+):
+    """Execute a training/evaluation function with stdout capture."""
+    from ..db.models import TrainingRun, EvaluationRun
+    ModelCls = TrainingRun if model_class == "TrainingRun" else EvaluationRun
+
+    db = SessionLocal()
+    old_stdout = sys.stdout
+    capture = StdoutCapture(run_id, q, emit_fn=_training_emit)
+
+    try:
+        row = db.query(ModelCls).filter(ModelCls.id == run_id).first()
+        if not row:
+            return
+        row.status = "running"
+        row.started_at = datetime.datetime.utcnow()
+        db.commit()
+        _training_emit(run_id, q, {"type": "status", "data": "running"})
+
+        sys.stdout = capture
+        result = run_fn(**kwargs)
+        capture.flush()
+        sys.stdout = old_stdout
+
+        # Update DB with results
+        row = db.query(ModelCls).filter(ModelCls.id == run_id).first()
+
+        if result and isinstance(result, dict):
+            if model_class == "TrainingRun":
+                row.adapter_path = result.get("adapter_path")
+                row.output_dir = result.get("output_dir")
+                row.final_loss = result.get("final_loss")
+                row.total_steps = result.get("total_steps")
+                row.training_runtime_seconds = result.get("training_runtime_seconds")
+                row.train_samples = result.get("train_samples", 0)
+                row.val_samples = result.get("val_samples", 0)
+                row.test_samples = result.get("test_samples", 0)
+            else:  # EvaluationRun
+                row.factual_accuracy = result.get("factual_accuracy")
+                row.completeness = result.get("completeness")
+                row.technical_precision = result.get("technical_precision")
+                row.overall_accuracy = result.get("overall_accuracy")
+                row.purity = result.get("purity")
+                row.entropy = result.get("entropy")
+                row.samples_scored = result.get("samples_scored", 0)
+                row.samples_skipped = result.get("samples_skipped", 0)
+                row.samples_failed = result.get("samples_failed", 0)
+                row.results_json = result.get("results")
+                row.articles_json = result.get("articles")
+
+        row.status = "completed"
+        row.completed_at = datetime.datetime.utcnow()
+        if row.started_at:
+            row.duration_seconds = (row.completed_at - row.started_at).total_seconds()
+        db.commit()
+
+        _training_emit(run_id, q, {"type": "status", "data": "completed"})
+
+    except Exception as e:
+        sys.stdout = old_stdout
+        capture.flush()
+
+        with _training_lock:
+            cancel_event = _training_cancel.get(run_id)
+        was_cancelled = cancel_event and cancel_event.is_set()
+
+        row = db.query(ModelCls).filter(ModelCls.id == run_id).first()
+        if row and row.status not in ("cancelled",):
+            if was_cancelled:
+                row.status = "cancelled"
+                row.completed_at = datetime.datetime.utcnow()
+                if row.started_at:
+                    row.duration_seconds = (row.completed_at - row.started_at).total_seconds()
+                db.commit()
+                _training_emit(run_id, q, {"type": "status", "data": "cancelled"})
+            else:
+                tb = traceback.format_exc()
+                row.status = "failed"
+                row.completed_at = datetime.datetime.utcnow()
+                row.error_message = str(e)
+                if row.started_at:
+                    row.duration_seconds = (row.completed_at - row.started_at).total_seconds()
+                db.commit()
+                _training_emit(run_id, q, {"type": "error", "data": str(e)})
+                _training_emit(run_id, q, {"type": "log", "data": tb})
+                _training_emit(run_id, q, {"type": "status", "data": "failed"})
+
+    finally:
+        sys.stdout = old_stdout
+        q.put(None)
+        db.close()
+
+        def _cleanup():
+            import time
+            time.sleep(60)
+            with _training_lock:
+                _training_queues.pop(run_id, None)
+                _training_futures.pop(run_id, None)
+                _training_logs.pop(run_id, None)
+                _training_cancel.pop(run_id, None)
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+
+
 def shutdown_runner():
-    """Shut down the thread pool executor."""
+    """Shut down both thread pool executors."""
     _executor.shutdown(wait=False)
+    _training_executor.shutdown(wait=False)
