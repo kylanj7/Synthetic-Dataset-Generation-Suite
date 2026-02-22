@@ -22,9 +22,8 @@ export default function Galaxy() {
   const handleNodeClick = useCallback((node: any) => {
     if (node.type === 'paper') {
       const paperId = parseInt(node.id.replace('paper-', ''))
-      selectPaper(paperId)
+      selectPaper(paperId, node.id)
     } else if (node.type === 'dataset') {
-      // Toggle cluster filter to this dataset's cluster
       setActiveCluster(activeCluster === node.cluster ? null : node.cluster)
     }
   }, [selectPaper, setActiveCluster, activeCluster])
