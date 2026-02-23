@@ -114,9 +114,11 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
 
-  // Paper nodes eligible for decorative QA cloud (skip expanded ones)
-  const cloudPapers = useMemo(
-    () => nodes.filter((n: any) => n.type === 'paper' && (n.qa_pair_count || 0) > 0 && !n._expanded),
+  // Nodes eligible for decorative QA cloud (papers + datasets with QA pairs)
+  const cloudNodes = useMemo(
+    () => nodes.filter((n: any) =>
+      (n.type === 'paper' || n.type === 'dataset') && (n.qa_pair_count || 0) > 0 && !n._expanded
+    ),
     [nodes],
   )
 
@@ -214,7 +216,7 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
       qaCloudRef.current = null
     }
 
-    if (cloudPapers.length === 0) {
+    if (cloudNodes.length === 0) {
       cloudMapRef.current = []
       return
     }
@@ -227,7 +229,7 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
     const phases: number[] = []
     const colors: number[] = []
 
-    for (const paper of cloudPapers) {
+    for (const paper of cloudNodes) {
       const qaCount = paper.qa_pair_count || 0
       const particleCount = Math.min(qaCount, 8)
       const baseRadius = (paper.size || 4) * 1.2 + Math.log2(qaCount + 1) * 2
@@ -283,7 +285,7 @@ export default function GalaxyCanvas({ nodes, links, searchQuery, onNodeClick }:
       qaCloudRef.current = null
       cloudMapRef.current = []
     }
-  }, [cloudPapers])
+  }, [cloudNodes])
 
   // ── Sync cloud center positions from force sim (CPU, only during sim) ──
   const syncCloudCenters = useCallback(() => {

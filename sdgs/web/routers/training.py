@@ -24,6 +24,12 @@ from ..schemas import (
     EvaluationDetailResponse,
     KnobsRequest,
     CorrectionRequest,
+    MergeConvertRequest,
+    MergeConvertResponse,
+    PushModelRequest,
+    PushModelResponse,
+    ConfigInfo,
+    ConfigListResponse,
 )
 from ..services.job_runner import submit_training_job, cancel_training_job
 
@@ -109,6 +115,73 @@ def _build_jsonl_from_db(dataset_id: int, db: Session) -> str:
     return str(out_path)
 
 
+def _load_yaml_configs(req: StartTrainingRequest):
+    """Load YAML configs when config names are provided.
+
+    Returns (model_config, training_config, dataset_config) — any may be None.
+    """
+    from ..engine.trainer import discover_configs, load_config
+
+    model_config = None
+    training_config = None
+    dataset_config = None
+
+    if req.model_config_name:
+        configs = discover_configs("models")
+        if req.model_config_name not in configs:
+            raise HTTPException(
+                400, f"Model config '{req.model_config_name}' not found. "
+                f"Available: {list(configs.keys())}"
+            )
+        model_config = load_config(configs[req.model_config_name])
+
+    if req.training_config_name:
+        configs = discover_configs("training")
+        if req.training_config_name not in configs:
+            raise HTTPException(
+                400, f"Training config '{req.training_config_name}' not found. "
+                f"Available: {list(configs.keys())}"
+            )
+        training_config = load_config(configs[req.training_config_name])
+
+    if req.dataset_config_name:
+        configs = discover_configs("datasets")
+        if req.dataset_config_name not in configs:
+            raise HTTPException(
+                400, f"Dataset config '{req.dataset_config_name}' not found. "
+                f"Available: {list(configs.keys())}"
+            )
+        dataset_config = load_config(configs[req.dataset_config_name])
+
+    return model_config, training_config, dataset_config
+
+
+# -------------------------------------------------------------------------
+# GET /configs/{config_type} — List available YAML configs
+# -------------------------------------------------------------------------
+
+@router.get("/configs/{config_type}", response_model=ConfigListResponse)
+def list_configs(
+    config_type: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    if config_type not in ("models", "datasets", "training"):
+        raise HTTPException(400, "config_type must be 'models', 'datasets', or 'training'")
+
+    from ..engine.trainer import discover_configs, load_config
+
+    configs = discover_configs(config_type)
+    items = []
+    for name, path in configs.items():
+        cfg = load_config(path)
+        items.append(ConfigInfo(
+            name=name,
+            display_name=cfg.get("name", name),
+            path=str(path),
+        ))
+    return ConfigListResponse(configs=items)
+
+
 # -------------------------------------------------------------------------
 # POST /start — Start fine-tuning
 # -------------------------------------------------------------------------
@@ -119,7 +192,15 @@ def start_training(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    dataset_path = _resolve_dataset_path(req, current_user, db)
+    # Load YAML configs if config names provided
+    yaml_model_config, yaml_training_config, yaml_dataset_config = _load_yaml_configs(req)
+
+    # In config-driven mode with a HF dataset, dataset_path resolution is optional
+    if yaml_dataset_config and not yaml_dataset_config.get("is_local", False):
+        # HF dataset — no local path needed; use a placeholder
+        dataset_path = req.dataset_path or "config-driven"
+    else:
+        dataset_path = _resolve_dataset_path(req, current_user, db)
 
     ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_name = f"train-{ts}"
@@ -144,19 +225,23 @@ def start_training(
     db.commit()
     db.refresh(run)
 
-    # Build config dicts for the trainer
-    model_config = {
+    # Build config dicts — merge YAML configs with request params
+    model_config = yaml_model_config or {
         "model_name": req.base_model,
         "size": req.model_size,
         "lora": {"r": req.lora_rank, "lora_alpha": req.lora_alpha},
     }
-    training_config = {
+    training_config = yaml_training_config or {
         "learning_rate": req.learning_rate,
         "num_train_epochs": req.num_epochs,
         "per_device_train_batch_size": req.batch_size,
         "gradient_accumulation_steps": req.gradient_accumulation_steps,
         "max_steps": req.max_steps,
     }
+
+    # Capture for closure
+    _dataset_config = yaml_dataset_config
+    _resume = req.resume_from_checkpoint
 
     from ..engine.training_service import train_with_metrics
 
@@ -166,6 +251,8 @@ def start_training(
             dataset_path=dataset_path,
             model_config=model_config,
             training_config=training_config,
+            dataset_config=_dataset_config,
+            resume_from_checkpoint=_resume,
             cancel_event=cancel_event,
         )
 
@@ -464,3 +551,87 @@ def start_correction(
     thread.start()
 
     return {"eval_id": eval_id, "status": "correction_started"}
+
+
+# -------------------------------------------------------------------------
+# POST /convert — LoRA merge + GGUF conversion
+# -------------------------------------------------------------------------
+
+@router.post("/convert", response_model=MergeConvertResponse)
+def start_convert(
+    req: MergeConvertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    if not Path(req.adapter_path).exists():
+        raise HTTPException(400, f"Adapter path not found: {req.adapter_path}")
+
+    from ..engine.merge_convert import merge_and_convert
+
+    gguf_path = merge_and_convert(
+        adapter_path=req.adapter_path,
+        base_model=req.base_model,
+        quant_method=req.quant_method,
+        output_name=req.output_name,
+        keep_merged=req.keep_merged,
+    )
+
+    return MergeConvertResponse(gguf_path=gguf_path)
+
+
+# -------------------------------------------------------------------------
+# POST /push — Upload model to HuggingFace Hub
+# -------------------------------------------------------------------------
+
+@router.post("/push", response_model=PushModelResponse)
+def push_to_hf(
+    req: PushModelRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Resolve HF token from stored settings or env
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        stored = db.query(ApiKey).filter(
+            ApiKey.user_id == current_user.id,
+            ApiKey.provider_name == "huggingface",
+        ).first()
+        if stored and current_user.encryption_key:
+            try:
+                token = decrypt_value(stored.encrypted_key, current_user.encryption_key)
+            except Exception:
+                pass
+    if not token:
+        raise HTTPException(400, "No HuggingFace token found. Set HF_TOKEN env var or store in settings.")
+
+    from ..engine.push_hf import push_gguf, push_merged
+
+    if req.gguf_path:
+        if not Path(req.gguf_path).exists():
+            raise HTTPException(400, f"GGUF file not found: {req.gguf_path}")
+        url = push_gguf(
+            gguf_path=req.gguf_path,
+            repo_id=req.repo_id,
+            private=req.private,
+            token=token,
+            base_model=req.base_model,
+            description=req.description,
+            dataset=req.dataset,
+            author=req.author,
+        )
+    elif req.merged_model_dir:
+        if not Path(req.merged_model_dir).exists():
+            raise HTTPException(400, f"Model dir not found: {req.merged_model_dir}")
+        url = push_merged(
+            model_dir=req.merged_model_dir,
+            repo_id=req.repo_id,
+            private=req.private,
+            token=token,
+            base_model=req.base_model,
+            description=req.description,
+            dataset=req.dataset,
+            author=req.author,
+        )
+    else:
+        raise HTTPException(400, "Provide gguf_path or merged_model_dir")
+
+    return PushModelResponse(repo_url=url)

@@ -1,0 +1,32 @@
+# Quantum Physics Reasoning Dataset Configuration
+# Generated reasoning chains for improved accuracy
+name: "Quantum Reasoning"
+dataset_name: "./datasets/quantum_reasoning_v1_filtered_v2.jsonl"
+domain: "Quantum Physics"
+is_local: true
+format: "jsonl"
+
+# Field mappings for this dataset
+fields:
+  instruction: "instruction"
+  response: "output"
+
+# Prompt template (includes reasoning format)
+prompt_template: |
+  Below is a quantum physics problem. Provide a detailed step-by-step reasoning path, then give the final answer.
+
+  ### Problem:
+  {}
+
+  ### Response:
+  {}
+
+# No context fields for this dataset
+context_fields: []
+
+# Train/val/test split ratios
+train_val_test_split:
+  train: 0.9
+  val: 0.05
+  test: 0.05
+  seed: 3407

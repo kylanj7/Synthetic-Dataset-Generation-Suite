@@ -257,13 +257,18 @@ class StartTrainingRequest(BaseModel):
     dataset_path: str | None = None
     base_model: str = "Qwen/Qwen2.5-14B-Instruct"
     model_size: str = "14B"
-    lora_rank: int = 16
-    lora_alpha: int = 16
-    learning_rate: float = 5e-5
-    num_epochs: int = 1
+    lora_rank: int = 64
+    lora_alpha: int = 128
+    learning_rate: float = 1e-5
+    num_epochs: int = 3
     batch_size: int = 4
     gradient_accumulation_steps: int = 4
     max_steps: int = -1
+    # Config-driven mode: specify YAML config names instead of individual params
+    dataset_config_name: str | None = None   # e.g. "quantum"
+    model_config_name: str | None = None     # e.g. "qwen2.5-14b-instruct"
+    training_config_name: str | None = None  # e.g. "default"
+    resume_from_checkpoint: str | None = None
 
 
 class TrainingRunResponse(BaseModel):
@@ -273,10 +278,10 @@ class TrainingRunResponse(BaseModel):
     dataset_id: int | None = None
     base_model: str | None = None
     model_size: str | None = None
-    lora_rank: int = 16
-    lora_alpha: int = 16
-    learning_rate: float = 5e-5
-    num_epochs: int = 1
+    lora_rank: int = 64
+    lora_alpha: int = 128
+    learning_rate: float = 1e-5
+    num_epochs: int = 3
     batch_size: int = 4
     gradient_accumulation_steps: int = 4
     max_steps: int = -1
@@ -365,3 +370,47 @@ class CorrectionRequest(BaseModel):
     api_key: str | None = None
     score_threshold: float = 50.0
     model: str = "claude-opus-4-20250916"
+
+
+# --- Merge/Convert schemas ---
+
+class MergeConvertRequest(BaseModel):
+    adapter_path: str
+    base_model: str | None = None  # auto-detected from run_metadata
+    quant_method: str = "q4_k_m"
+    output_name: str | None = None
+    keep_merged: bool = False
+
+
+class MergeConvertResponse(BaseModel):
+    gguf_path: str
+    status: str = "completed"
+
+
+# --- HF Model Push schemas ---
+
+class PushModelRequest(BaseModel):
+    repo_id: str
+    gguf_path: str | None = None
+    merged_model_dir: str | None = None
+    private: bool = True
+    base_model: str = "Qwen/Qwen2.5-14B-Instruct"
+    description: str = ""
+    dataset: str = ""
+    author: str = ""
+
+
+class PushModelResponse(BaseModel):
+    repo_url: str
+
+
+# --- Config listing schemas ---
+
+class ConfigInfo(BaseModel):
+    name: str
+    display_name: str
+    path: str
+
+
+class ConfigListResponse(BaseModel):
+    configs: list[ConfigInfo]

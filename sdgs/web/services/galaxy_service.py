@@ -116,7 +116,7 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
         color = cluster_infos[cid]["color"] if cid < len(cluster_infos) else "#7eb8ff"
         ds_qa_count = qa_count_by_dataset[ds.id]
         ds_paper_count = len(papers_by_dataset[ds.id])
-        size = 12 + math.log2(ds_qa_count + 1) * 3
+        size = min(20, 12 + math.log2(ds_qa_count + 1) * 1.5)
         nodes.append({
             "id": f"dataset-{ds.id}",
             "type": "dataset",
@@ -129,6 +129,7 @@ def build_galaxy_data(db: Session, user_id: int) -> dict:
             "abstract": f"{ds_paper_count} papers, {ds_qa_count} Q&A pairs | {ds.provider or 'unknown'}/{ds.model or 'default'}",
             "authors": None,
             "url": None,
+            "qa_pair_count": ds_qa_count,
         })
 
     # Paper nodes — sized by QA count + citation count

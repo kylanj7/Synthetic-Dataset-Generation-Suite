@@ -143,12 +143,12 @@ class TrainingRun(Base):
     # Model config
     base_model = Column(String(300), nullable=True)
     model_size = Column(String(50), nullable=True)
-    lora_rank = Column(Integer, default=16)
-    lora_alpha = Column(Integer, default=16)
+    lora_rank = Column(Integer, default=64)
+    lora_alpha = Column(Integer, default=128)
 
     # Training config
-    learning_rate = Column(Float, default=5e-5)
-    num_epochs = Column(Integer, default=1)
+    learning_rate = Column(Float, default=1e-5)
+    num_epochs = Column(Integer, default=3)
     batch_size = Column(Integer, default=4)
     gradient_accumulation_steps = Column(Integer, default=4)
     max_steps = Column(Integer, default=-1)

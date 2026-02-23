@@ -26,6 +26,8 @@ def train_with_metrics(
     dataset_path: str,
     model_config: Dict[str, Any],
     training_config: Dict[str, Any],
+    dataset_config: Optional[Dict[str, Any]] = None,
+    resume_from_checkpoint: Optional[str] = None,
     cancel_event: Optional[threading.Event] = None,
 ) -> Dict[str, Any]:
     """Run a full training pipeline with live metric broadcasting.
@@ -59,9 +61,11 @@ def train_with_metrics(
             dataset_path=dataset_path,
             model_config=model_config,
             training_config=training_config,
+            dataset_config=dataset_config,
             cancel_event=cancel_event,
             on_metric=on_metric,
             knobs=knobs,
+            resume_from_checkpoint=resume_from_checkpoint,
         )
         result = trainer.run_full_pipeline()
 
