@@ -1,15 +1,29 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { pushModel } from '../api/client'
+import { pushModel, getArtifacts, ArtifactEntry } from '../api/client'
 
 export default function PushModel() {
   const [searchParams] = useSearchParams()
   const prefilledGguf = searchParams.get('gguf_path') || ''
 
+  const [ggufFiles, setGgufFiles] = useState<ArtifactEntry[]>([])
+  const [adapters, setAdapters] = useState<ArtifactEntry[]>([])
   const [sourceType, setSourceType] = useState<'gguf' | 'merged'>(prefilledGguf ? 'gguf' : 'gguf')
   const [path, setPath] = useState(prefilledGguf)
+  const [customPath, setCustomPath] = useState(!!prefilledGguf)
   const [repoId, setRepoId] = useState('')
+
+  useEffect(() => {
+    getArtifacts().then((res) => {
+      setGgufFiles(res.gguf_files)
+      setAdapters(res.adapters)
+      // If prefilled path matches a known artifact, don't use custom mode
+      if (prefilledGguf && res.gguf_files.some((f) => f.path === prefilledGguf)) {
+        setCustomPath(false)
+      }
+    }).catch(() => {})
+  }, [])
   const [isPrivate, setIsPrivate] = useState(true)
 
   // Metadata
@@ -61,7 +75,7 @@ export default function PushModel() {
             </label>
             <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
               <button
-                onClick={() => setSourceType('gguf')}
+                onClick={() => { setSourceType('gguf'); setCustomPath(false); setPath('') }}
                 disabled={submitting}
                 style={{
                   background: sourceType === 'gguf' ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
@@ -76,7 +90,7 @@ export default function PushModel() {
                 GGUF File
               </button>
               <button
-                onClick={() => setSourceType('merged')}
+                onClick={() => { setSourceType('merged'); setCustomPath(false); setPath('') }}
                 disabled={submitting}
                 style={{
                   background: sourceType === 'merged' ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
@@ -95,13 +109,45 @@ export default function PushModel() {
 
           <div style={{ marginBottom: '16px' }}>
             <label>{sourceType === 'gguf' ? 'GGUF Path' : 'Merged Model Directory'}</label>
-            <input
-              type="text"
-              placeholder={sourceType === 'gguf' ? '/path/to/model.gguf' : '/path/to/merged-model/'}
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              disabled={submitting}
-            />
+            {!customPath ? (
+              <select
+                value={path}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomPath(true)
+                    setPath('')
+                  } else {
+                    setPath(e.target.value)
+                  }
+                }}
+                disabled={submitting}
+              >
+                <option value="">Select {sourceType === 'gguf' ? 'a GGUF file' : 'a model'}...</option>
+                {(sourceType === 'gguf' ? ggufFiles : adapters).map((a) => (
+                  <option key={a.path} value={a.path}>{a.label}</option>
+                ))}
+                <option value="__custom__">Custom path...</option>
+              </select>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  placeholder={sourceType === 'gguf' ? '/path/to/model.gguf' : '/path/to/merged-model/'}
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  disabled={submitting}
+                />
+                <button
+                  onClick={() => { setCustomPath(false); setPath('') }}
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--accent-blue)',
+                    cursor: 'pointer', fontSize: '12px', padding: '4px 0', marginTop: '4px',
+                  }}
+                >
+                  Back to dropdown
+                </button>
+              </>
+            )}
           </div>
 
           <div style={{ marginBottom: '16px' }}>

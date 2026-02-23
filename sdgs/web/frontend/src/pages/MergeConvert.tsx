@@ -1,13 +1,19 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { mergeConvert } from '../api/client'
+import { mergeConvert, getArtifacts, ArtifactEntry } from '../api/client'
 
 const QUANT_METHODS = ['q2_k', 'q3_k_m', 'q4_k_s', 'q4_k_m', 'q5_k_m', 'q6_k', 'q8_0']
 
 export default function MergeConvert() {
   const navigate = useNavigate()
+  const [adapters, setAdapters] = useState<ArtifactEntry[]>([])
   const [adapterPath, setAdapterPath] = useState('')
+  const [customAdapter, setCustomAdapter] = useState(false)
   const [baseModel, setBaseModel] = useState('')
+
+  useEffect(() => {
+    getArtifacts().then((res) => setAdapters(res.adapters)).catch(() => {})
+  }, [])
   const [quantMethod, setQuantMethod] = useState('q4_k_m')
   const [outputName, setOutputName] = useState('')
   const [keepMerged, setKeepMerged] = useState(false)
@@ -46,13 +52,45 @@ export default function MergeConvert() {
         <div className="card">
           <div style={{ marginBottom: '16px' }}>
             <label>Adapter Path *</label>
-            <input
-              type="text"
-              placeholder="/path/to/lora-adapter"
-              value={adapterPath}
-              onChange={(e) => setAdapterPath(e.target.value)}
-              disabled={submitting}
-            />
+            {!customAdapter ? (
+              <select
+                value={adapterPath}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomAdapter(true)
+                    setAdapterPath('')
+                  } else {
+                    setAdapterPath(e.target.value)
+                  }
+                }}
+                disabled={submitting}
+              >
+                <option value="">Select an adapter...</option>
+                {adapters.map((a) => (
+                  <option key={a.path} value={a.path}>{a.label}</option>
+                ))}
+                <option value="__custom__">Custom path...</option>
+              </select>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  placeholder="/path/to/lora-adapter"
+                  value={adapterPath}
+                  onChange={(e) => setAdapterPath(e.target.value)}
+                  disabled={submitting}
+                />
+                <button
+                  onClick={() => { setCustomAdapter(false); setAdapterPath('') }}
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--accent-blue)',
+                    cursor: 'pointer', fontSize: '12px', padding: '4px 0', marginTop: '4px',
+                  }}
+                >
+                  Back to dropdown
+                </button>
+              </>
+            )}
           </div>
 
           <div style={{ marginBottom: '16px' }}>

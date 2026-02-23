@@ -414,3 +414,17 @@ class ConfigInfo(BaseModel):
 
 class ConfigListResponse(BaseModel):
     configs: list[ConfigInfo]
+
+
+# --- Artifact listing schemas ---
+
+class ArtifactEntry(BaseModel):
+    path: str
+    label: str
+
+
+class ArtifactListResponse(BaseModel):
+    adapters: list[ArtifactEntry]
+    gguf_files: list[ArtifactEntry]
+    checkpoints: list[ArtifactEntry]
+    merged_models: list[ArtifactEntry]

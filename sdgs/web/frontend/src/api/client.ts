@@ -468,6 +468,22 @@ export interface ConfigListResponse {
 export const getConfigs = (configType: string) =>
   request<ConfigListResponse>(`/training/configs/${configType}`)
 
+// Training Artifacts
+export interface ArtifactEntry {
+  path: string
+  label: string
+}
+
+export interface ArtifactListResponse {
+  adapters: ArtifactEntry[]
+  gguf_files: ArtifactEntry[]
+  checkpoints: ArtifactEntry[]
+  merged_models: ArtifactEntry[]
+}
+
+export const getArtifacts = () =>
+  request<ArtifactListResponse>('/training/artifacts')
+
 // Training Knobs
 export const updateKnobs = (runId: number, data: { learning_rate?: number }) =>
   request<{ run_id: number; knobs: Record<string, number> }>(`/training/${runId}/knobs`, {

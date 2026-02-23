@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, StopCircle } from 'lucide-react'
-import { getDatasets, startTraining, cancelTraining, getConfigs, Dataset, ConfigInfo } from '../api/client'
+import { getDatasets, startTraining, cancelTraining, getConfigs, getArtifacts, Dataset, ConfigInfo, ArtifactEntry } from '../api/client'
 import { useTrainingSSE } from '../hooks/useTrainingSSE'
 
 export default function StartTraining() {
@@ -38,7 +38,9 @@ export default function StartTraining() {
   const [batchSize, setBatchSize] = useState(4)
   const [gradAccumSteps, setGradAccumSteps] = useState(4)
   const [maxSteps, setMaxSteps] = useState(-1)
+  const [checkpoints, setCheckpoints] = useState<ArtifactEntry[]>([])
   const [resumeCheckpoint, setResumeCheckpoint] = useState('')
+  const [customCheckpoint, setCustomCheckpoint] = useState(false)
 
   // State
   const [submitting, setSubmitting] = useState(false)
@@ -51,6 +53,7 @@ export default function StartTraining() {
     getDatasets(1).then((res) => {
       setDatasets(res.datasets.filter((d) => d.status === 'completed'))
     }).catch(() => {})
+    getArtifacts().then((res) => setCheckpoints(res.checkpoints)).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -401,14 +404,47 @@ export default function StartTraining() {
               </div>
               <div style={{ marginTop: '12px' }}>
                 <label>Resume from Checkpoint</label>
-                <input
-                  type="text"
-                  placeholder="/path/to/checkpoint-XXX"
-                  value={resumeCheckpoint}
-                  onChange={(e) => setResumeCheckpoint(e.target.value)}
-                  disabled={submitting}
-                  style={{ fontSize: '13px' }}
-                />
+                {!customCheckpoint ? (
+                  <select
+                    value={resumeCheckpoint}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') {
+                        setCustomCheckpoint(true)
+                        setResumeCheckpoint('')
+                      } else {
+                        setResumeCheckpoint(e.target.value)
+                      }
+                    }}
+                    disabled={submitting}
+                    style={{ fontSize: '13px' }}
+                  >
+                    <option value="">None</option>
+                    {checkpoints.map((c) => (
+                      <option key={c.path} value={c.path}>{c.label}</option>
+                    ))}
+                    <option value="__custom__">Custom path...</option>
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="/path/to/checkpoint-XXX"
+                      value={resumeCheckpoint}
+                      onChange={(e) => setResumeCheckpoint(e.target.value)}
+                      disabled={submitting}
+                      style={{ fontSize: '13px' }}
+                    />
+                    <button
+                      onClick={() => { setCustomCheckpoint(false); setResumeCheckpoint('') }}
+                      style={{
+                        background: 'none', border: 'none', color: 'var(--accent-blue)',
+                        cursor: 'pointer', fontSize: '12px', padding: '4px 0', marginTop: '4px',
+                      }}
+                    >
+                      Back to dropdown
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -419,14 +455,47 @@ export default function StartTraining() {
         {configMode === 'preset' && (
           <div style={{ marginBottom: '20px' }}>
             <label>Resume from Checkpoint</label>
-            <input
-              type="text"
-              placeholder="/path/to/checkpoint-XXX"
-              value={resumeCheckpoint}
-              onChange={(e) => setResumeCheckpoint(e.target.value)}
-              disabled={submitting}
-              style={{ fontSize: '13px' }}
-            />
+            {!customCheckpoint ? (
+              <select
+                value={resumeCheckpoint}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomCheckpoint(true)
+                    setResumeCheckpoint('')
+                  } else {
+                    setResumeCheckpoint(e.target.value)
+                  }
+                }}
+                disabled={submitting}
+                style={{ fontSize: '13px' }}
+              >
+                <option value="">None</option>
+                {checkpoints.map((c) => (
+                  <option key={c.path} value={c.path}>{c.label}</option>
+                ))}
+                <option value="__custom__">Custom path...</option>
+              </select>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  placeholder="/path/to/checkpoint-XXX"
+                  value={resumeCheckpoint}
+                  onChange={(e) => setResumeCheckpoint(e.target.value)}
+                  disabled={submitting}
+                  style={{ fontSize: '13px' }}
+                />
+                <button
+                  onClick={() => { setCustomCheckpoint(false); setResumeCheckpoint('') }}
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--accent-blue)',
+                    cursor: 'pointer', fontSize: '12px', padding: '4px 0', marginTop: '4px',
+                  }}
+                >
+                  Back to dropdown
+                </button>
+              </>
+            )}
           </div>
         )}
 

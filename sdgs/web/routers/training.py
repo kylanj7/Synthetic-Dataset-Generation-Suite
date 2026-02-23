@@ -30,6 +30,8 @@ from ..schemas import (
     PushModelResponse,
     ConfigInfo,
     ConfigListResponse,
+    ArtifactEntry,
+    ArtifactListResponse,
 )
 from ..services.job_runner import submit_training_job, cancel_training_job
 
@@ -180,6 +182,95 @@ def list_configs(
             path=str(path),
         ))
     return ConfigListResponse(configs=items)
+
+
+# -------------------------------------------------------------------------
+# GET /artifacts — List adapters, GGUF files, checkpoints, merged models
+# -------------------------------------------------------------------------
+
+@router.get("/artifacts", response_model=ArtifactListResponse)
+def list_artifacts(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    adapters: list[ArtifactEntry] = []
+    gguf_files: list[ArtifactEntry] = []
+    checkpoints: list[ArtifactEntry] = []
+    merged_models: list[ArtifactEntry] = []
+    seen_adapter_paths: set[str] = set()
+
+    outputs_dir = Path("outputs")
+    gguf_dir = Path("models/gguf")
+
+    # Scan outputs/ for adapters, checkpoints, merged models
+    if outputs_dir.is_dir():
+        for run_dir in sorted(outputs_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            run_name = run_dir.name
+
+            # Adapters: subdir containing final_adapter/
+            final_adapter = run_dir / "final_adapter"
+            if final_adapter.is_dir():
+                path = str(final_adapter)
+                adapters.append(ArtifactEntry(path=path, label=run_name))
+                seen_adapter_paths.add(path)
+
+            # Adapters: subdir with adapter_config.json directly
+            if (run_dir / "adapter_config.json").exists() and str(run_dir) not in seen_adapter_paths:
+                path = str(run_dir)
+                adapters.append(ArtifactEntry(path=path, label=run_name))
+                seen_adapter_paths.add(path)
+
+            # Checkpoints: checkpoint-* subdirs
+            for ckpt in sorted(run_dir.glob("checkpoint-*")):
+                if ckpt.is_dir():
+                    try:
+                        ckpt_num = ckpt.name.split("-", 1)[1]
+                    except IndexError:
+                        ckpt_num = ckpt.name
+                    checkpoints.append(ArtifactEntry(
+                        path=str(ckpt),
+                        label=f"{run_name}/checkpoint-{ckpt_num}",
+                    ))
+
+            # Merged models: subdir containing a config.json but not adapter_config.json
+            # (merged models are full model dirs, not LoRA adapters)
+            if (run_dir / "merged").is_dir():
+                merged_models.append(ArtifactEntry(
+                    path=str(run_dir / "merged"),
+                    label=f"{run_name}/merged",
+                ))
+
+    # Scan models/gguf/ for GGUF files
+    if gguf_dir.is_dir():
+        for gguf_file in sorted(gguf_dir.glob("*.gguf")):
+            if gguf_file.is_file():
+                gguf_files.append(ArtifactEntry(
+                    path=str(gguf_file),
+                    label=gguf_file.name,
+                ))
+
+    # Fallback: adapters from DB training runs not found on disk
+    db_runs = db.query(TrainingRun).filter(
+        TrainingRun.user_id == current_user.id,
+        TrainingRun.adapter_path.isnot(None),
+    ).all()
+    for run in db_runs:
+        if run.adapter_path and run.adapter_path not in seen_adapter_paths:
+            if Path(run.adapter_path).exists():
+                adapters.append(ArtifactEntry(
+                    path=run.adapter_path,
+                    label=run.run_name,
+                ))
+                seen_adapter_paths.add(run.adapter_path)
+
+    return ArtifactListResponse(
+        adapters=adapters,
+        gguf_files=gguf_files,
+        checkpoints=checkpoints,
+        merged_models=merged_models,
+    )
 
 
 # -------------------------------------------------------------------------

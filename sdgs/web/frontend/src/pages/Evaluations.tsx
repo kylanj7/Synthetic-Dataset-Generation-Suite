@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FlaskConical } from 'lucide-react'
 import { useTrainingStore } from '../store/trainingStore'
-import { startEvaluation } from '../api/client'
+import { startEvaluation, getArtifacts, ArtifactEntry } from '../api/client'
 
 const statusClass: Record<string, string> = {
   pending: 'badge-pending',
@@ -32,7 +32,9 @@ export default function Evaluations() {
 
   // Quick-start evaluation form
   const [showStart, setShowStart] = useState(!!trainingRunId)
+  const [adapters, setAdapters] = useState<ArtifactEntry[]>([])
   const [modelPath, setModelPath] = useState('')
+  const [customModelPath, setCustomModelPath] = useState(false)
   const [judgeModel, setJudgeModel] = useState('gpt-oss:120b')
   const [maxSamples, setMaxSamples] = useState(50)
   const [startError, setStartError] = useState('')
@@ -40,6 +42,7 @@ export default function Evaluations() {
 
   useEffect(() => {
     fetchEvaluations()
+    getArtifacts().then((res) => setAdapters(res.adapters)).catch(() => {})
   }, [])
 
   const totalPages = Math.ceil(evalsTotal / 20)
@@ -89,14 +92,47 @@ export default function Evaluations() {
             {!trainingRunId && (
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Model/Adapter Path</label>
-                <input
-                  type="text"
-                  placeholder="/path/to/adapter"
-                  value={modelPath}
-                  onChange={(e) => setModelPath(e.target.value)}
-                  disabled={starting}
-                  style={{ fontSize: '14px' }}
-                />
+                {!customModelPath ? (
+                  <select
+                    value={modelPath}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') {
+                        setCustomModelPath(true)
+                        setModelPath('')
+                      } else {
+                        setModelPath(e.target.value)
+                      }
+                    }}
+                    disabled={starting}
+                    style={{ fontSize: '14px' }}
+                  >
+                    <option value="">Select an adapter...</option>
+                    {adapters.map((a) => (
+                      <option key={a.path} value={a.path}>{a.label}</option>
+                    ))}
+                    <option value="__custom__">Custom path...</option>
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="/path/to/adapter"
+                      value={modelPath}
+                      onChange={(e) => setModelPath(e.target.value)}
+                      disabled={starting}
+                      style={{ fontSize: '14px' }}
+                    />
+                    <button
+                      onClick={() => { setCustomModelPath(false); setModelPath('') }}
+                      style={{
+                        background: 'none', border: 'none', color: 'var(--accent-blue)',
+                        cursor: 'pointer', fontSize: '12px', padding: '4px 0', marginTop: '4px',
+                      }}
+                    >
+                      Back to dropdown
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <div>
