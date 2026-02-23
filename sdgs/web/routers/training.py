@@ -1,15 +1,19 @@
 """Training & evaluation API: fine-tuning, judge evaluation, metrics."""
 import datetime
 import json
+import os
 import re
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..db.database import get_db
-from ..db.models import Dataset, TrainingRun, EvaluationRun, QAPair
+from ..auth import decrypt_value
+from ..db.database import get_db, SessionLocal
+from ..db.models import ApiKey, Dataset, TrainingRun, EvaluationRun, QAPair
 from ..deps import CurrentUser, get_current_user
+from ..engine.training_service import get_knobs, set_knob
 from ..schemas import (
     StartTrainingRequest,
     TrainingRunResponse,
@@ -18,6 +22,8 @@ from ..schemas import (
     EvaluationRunResponse,
     EvaluationRunListResponse,
     EvaluationDetailResponse,
+    KnobsRequest,
+    CorrectionRequest,
 )
 from ..services.job_runner import submit_training_job, cancel_training_job
 
@@ -152,15 +158,16 @@ def start_training(
         "max_steps": req.max_steps,
     }
 
+    from ..engine.training_service import train_with_metrics
+
     def _run(cancel_event=None):
-        from ..engine.trainer import QwenTrainer
-        trainer = QwenTrainer(
+        return train_with_metrics(
+            run_id=run.id,
             dataset_path=dataset_path,
             model_config=model_config,
             training_config=training_config,
             cancel_event=cancel_event,
         )
-        return trainer.run_full_pipeline()
 
     submit_training_job(run.id, _run, model_class="TrainingRun")
 
@@ -336,4 +343,124 @@ def get_evaluation_detail(
     resp = EvaluationDetailResponse.model_validate(eval_run)
     resp.per_sample_results = eval_run.results_json
     resp.articles_log = eval_run.articles_json
+    resp.correction_results = eval_run.correction_json
     return resp
+
+
+# -------------------------------------------------------------------------
+# POST /{run_id}/knobs — Adjust training hyperparameters mid-run
+# -------------------------------------------------------------------------
+
+@router.post("/{run_id}/knobs")
+def update_knobs(
+    run_id: int,
+    req: KnobsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.query(TrainingRun).filter(
+        TrainingRun.id == run_id,
+        TrainingRun.user_id == current_user.id,
+    ).first()
+    if not run:
+        raise HTTPException(404, "Training run not found")
+    if run.status != "running":
+        raise HTTPException(400, f"Cannot adjust knobs on run with status '{run.status}'")
+
+    knobs = get_knobs(run_id)
+    if knobs is None:
+        raise HTTPException(400, "No active knobs for this run (training may have finished)")
+
+    if req.learning_rate is not None:
+        set_knob(run_id, "learning_rate", req.learning_rate)
+
+    return {"run_id": run_id, "knobs": get_knobs(run_id)}
+
+
+# -------------------------------------------------------------------------
+# POST /evaluate/{eval_id}/correct — Run Claude correction on failing samples
+# -------------------------------------------------------------------------
+
+@router.post("/evaluate/{eval_id}/correct")
+def start_correction(
+    eval_id: int,
+    req: CorrectionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    eval_run = db.query(EvaluationRun).filter(
+        EvaluationRun.id == eval_id,
+        EvaluationRun.user_id == current_user.id,
+    ).first()
+    if not eval_run:
+        raise HTTPException(404, "Evaluation run not found")
+    if eval_run.status != "completed":
+        raise HTTPException(400, "Evaluation must be completed before correction")
+    if not eval_run.results_json:
+        raise HTTPException(400, "No per-sample results available for correction")
+
+    # Resolve Anthropic API key: request param > stored ApiKey > env var
+    api_key = req.api_key
+    if not api_key:
+        stored = db.query(ApiKey).filter(
+            ApiKey.user_id == current_user.id,
+            ApiKey.provider_name == "anthropic",
+        ).first()
+        if stored and current_user.encryption_key:
+            try:
+                api_key = decrypt_value(stored.encrypted_key, current_user.encryption_key)
+            except Exception:
+                pass
+    if not api_key:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(400, "No Anthropic API key found. Provide api_key, store one in settings, or set ANTHROPIC_API_KEY env var.")
+
+    # Resolve dataset path from the associated training run
+    dataset_path = None
+    if eval_run.training_run_id:
+        training_run = db.query(TrainingRun).filter(
+            TrainingRun.id == eval_run.training_run_id,
+        ).first()
+        if training_run:
+            dataset_path = training_run.dataset_path
+    if not dataset_path:
+        dataset_path = eval_run.test_dataset_path
+    if not dataset_path or not Path(dataset_path).exists():
+        raise HTTPException(400, "Cannot resolve dataset path for appending corrections")
+
+    per_sample = eval_run.results_json
+    articles_log = eval_run.articles_json or []
+
+    # Capture eval_id for the daemon thread closure
+    _eval_id = eval_id
+    _score_threshold = req.score_threshold
+    _model = req.model
+
+    def _run_correction():
+        from ..engine.correction_agent import CorrectionAgent
+        agent = CorrectionAgent(
+            api_key=api_key,
+            score_threshold=_score_threshold,
+            model=_model,
+        )
+        summary = agent.run_correction(
+            eval_id=_eval_id,
+            per_sample_results=per_sample,
+            dataset_path=dataset_path,
+            articles_log=articles_log,
+        )
+        # Store results in DB
+        sess = SessionLocal()
+        try:
+            row = sess.query(EvaluationRun).filter(EvaluationRun.id == _eval_id).first()
+            if row:
+                row.correction_json = summary
+                sess.commit()
+        finally:
+            sess.close()
+
+    thread = threading.Thread(target=_run_correction, daemon=True)
+    thread.start()
+
+    return {"eval_id": eval_id, "status": "correction_started"}

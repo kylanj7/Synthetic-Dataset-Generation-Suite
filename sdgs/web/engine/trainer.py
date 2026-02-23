@@ -9,7 +9,7 @@ import json
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
 from datasets import Dataset, load_dataset
@@ -18,9 +18,53 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    TrainerCallback,
     TrainingArguments,
 )
 from trl import SFTTrainer
+
+
+# ---------------------------------------------------------------------------
+# MetricsCallback — streams step-level metrics + applies live knob changes
+# ---------------------------------------------------------------------------
+
+class MetricsCallback(TrainerCallback):
+    """Emits training metrics via a callable and applies live knob adjustments."""
+
+    def __init__(
+        self,
+        on_metric: Callable[[Dict[str, Any]], None],
+        knobs: Optional[Dict[str, Any]] = None,
+    ):
+        self._on_metric = on_metric
+        self._knobs = knobs or {}
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is None:
+            return
+        self._on_metric({
+            "type": "metric",
+            "step": state.global_step,
+            "epoch": round(state.epoch, 4) if state.epoch else 0,
+            "max_steps": state.max_steps,
+            "loss": logs.get("loss"),
+            "learning_rate": logs.get("learning_rate"),
+            "grad_norm": logs.get("grad_norm"),
+        })
+
+    def on_step_end(self, args, state, control, **kwargs):
+        new_lr = self._knobs.get("learning_rate")
+        if new_lr is None:
+            return
+        model = kwargs.get("model")
+        if model is None:
+            return
+        optimizer = kwargs.get("optimizer")
+        if optimizer is None:
+            return
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = float(new_lr)
+        self._knobs.pop("learning_rate", None)
 
 # ---------------------------------------------------------------------------
 # Defaults (matching Qwen 2.5 14B)
@@ -83,11 +127,15 @@ class QwenTrainer:
         model_config: Optional[Dict[str, Any]] = None,
         training_config: Optional[Dict[str, Any]] = None,
         cancel_event: Optional[threading.Event] = None,
+        on_metric: Optional[Callable[[Dict[str, Any]], None]] = None,
+        knobs: Optional[Dict[str, Any]] = None,
     ):
         self.dataset_path = dataset_path
         self.model_config = {**DEFAULT_MODEL_CONFIG, **(model_config or {})}
         self.training_config = {**DEFAULT_TRAINING_CONFIG, **(training_config or {})}
         self.cancel_event = cancel_event
+        self.on_metric = on_metric
+        self.knobs = knobs or {}
 
         self.model = None
         self.tokenizer = None
@@ -250,11 +298,16 @@ class QwenTrainer:
             report_to="none",
         )
 
+        callbacks = []
+        if self.on_metric:
+            callbacks.append(MetricsCallback(self.on_metric, self.knobs))
+
         trainer = SFTTrainer(
             model=self.model,
             train_dataset=self.train_dataset,
             eval_dataset=self.val_dataset,
             args=training_args,
+            callbacks=callbacks or None,
         )
 
         print("Starting training...")

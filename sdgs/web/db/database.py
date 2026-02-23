@@ -29,6 +29,11 @@ def _migrate(eng):
         if "max_tokens" not in columns:
             with eng.begin() as conn:
                 conn.execute(text("ALTER TABLE datasets ADD COLUMN max_tokens INTEGER"))
+    if insp.has_table("evaluation_runs"):
+        columns = {c["name"] for c in insp.get_columns("evaluation_runs")}
+        if "correction_json" not in columns:
+            with eng.begin() as conn:
+                conn.execute(text("ALTER TABLE evaluation_runs ADD COLUMN correction_json JSON"))
 
 
 def get_db():

@@ -210,6 +210,7 @@ class EvaluationRun(Base):
     # JSON blobs
     results_json = Column(JSON, nullable=True)
     articles_json = Column(JSON, nullable=True)
+    correction_json = Column(JSON, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

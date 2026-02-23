@@ -26,6 +26,7 @@ web = [
     "bcrypt>=4.0",
     "cryptography>=41.0",
     "huggingface_hub>=0.20",
+    "anthropic>=0.40",
 ]
 
 [tool.setuptools.packages.find]

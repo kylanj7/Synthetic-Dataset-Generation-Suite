@@ -352,3 +352,16 @@ class EvaluationRunListResponse(BaseModel):
 class EvaluationDetailResponse(EvaluationRunResponse):
     per_sample_results: list[dict] | None = None
     articles_log: list[dict] | None = None
+    correction_results: dict | None = None
+
+
+# --- Knobs / Correction schemas ---
+
+class KnobsRequest(BaseModel):
+    learning_rate: float | None = None
+
+
+class CorrectionRequest(BaseModel):
+    api_key: str | None = None
+    score_threshold: float = 50.0
+    model: str = "claude-opus-4-20250916"

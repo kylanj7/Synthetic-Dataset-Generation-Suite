@@ -1,4 +1,5 @@
 """FastAPI application for the SDGS web interface."""
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import CORS_ORIGINS, DATA_DIR
 from .db.database import init_db
+from .routers.pulse import broadcast_consumer
 from .services.job_runner import shutdown_runner
 
 
@@ -17,7 +19,9 @@ async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
     init_db()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    consumer_task = asyncio.create_task(broadcast_consumer())
     yield
+    consumer_task.cancel()
     shutdown_runner()
 
 
@@ -37,7 +41,7 @@ app.add_middleware(
 )
 
 # Register API routers
-from .routers import auth, datasets, papers, providers, galaxy, sse, settings, training  # noqa: E402
+from .routers import auth, datasets, papers, providers, galaxy, sse, settings, training, pulse  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
@@ -47,6 +51,7 @@ app.include_router(providers.router, prefix="/api", tags=["providers"])
 app.include_router(galaxy.router, prefix="/api/galaxy", tags=["galaxy"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
+app.include_router(pulse.router, tags=["pulse"])
 
 
 @app.get("/api/health")
