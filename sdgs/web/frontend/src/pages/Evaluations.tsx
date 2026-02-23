@@ -32,7 +32,7 @@ export default function Evaluations() {
 
   // Quick-start evaluation form
   const [showStart, setShowStart] = useState(!!trainingRunId)
-  const [adapters, setAdapters] = useState<ArtifactEntry[]>([])
+  const [mergedModels, setMergedModels] = useState<ArtifactEntry[]>([])
   const [modelPath, setModelPath] = useState('')
   const [customModelPath, setCustomModelPath] = useState(false)
   const [judgeModel, setJudgeModel] = useState('gpt-oss:120b')
@@ -42,7 +42,7 @@ export default function Evaluations() {
 
   useEffect(() => {
     fetchEvaluations()
-    getArtifacts().then((res) => setAdapters(res.adapters)).catch(() => {})
+    getArtifacts().then((res) => setMergedModels(res.merged_models)).catch(() => {})
   }, [])
 
   const totalPages = Math.ceil(evalsTotal / 20)
@@ -91,7 +91,7 @@ export default function Evaluations() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             {!trainingRunId && (
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Model/Adapter Path</label>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Model Path</label>
                 {!customModelPath ? (
                   <select
                     value={modelPath}
@@ -106,8 +106,8 @@ export default function Evaluations() {
                     disabled={starting}
                     style={{ fontSize: '14px' }}
                   >
-                    <option value="">Select an adapter...</option>
-                    {adapters.map((a) => (
+                    <option value="">Select a merged model...</option>
+                    {mergedModels.map((a) => (
                       <option key={a.path} value={a.path}>{a.label}</option>
                     ))}
                     <option value="__custom__">Custom path...</option>

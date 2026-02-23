@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..auth import decrypt_value
+from ..config import BASE_DIR
 from ..db.database import get_db, SessionLocal
 from ..db.models import ApiKey, Dataset, TrainingRun, EvaluationRun, QAPair
 from ..deps import CurrentUser, get_current_user
@@ -199,8 +200,8 @@ def list_artifacts(
     merged_models: list[ArtifactEntry] = []
     seen_adapter_paths: set[str] = set()
 
-    outputs_dir = Path("outputs")
-    gguf_dir = Path("models/gguf")
+    outputs_dir = BASE_DIR / "outputs"
+    gguf_dir = BASE_DIR / "models" / "gguf"
 
     # Scan outputs/ for adapters, checkpoints, merged models
     if outputs_dir.is_dir():
