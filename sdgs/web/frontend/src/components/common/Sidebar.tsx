@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Database, FileText, Orbit, Cpu, FlaskConical, Settings, LogOut } from 'lucide-react'
+import { Database, FileText, Orbit, Cpu, FlaskConical, ArrowRightLeft, Upload, Settings, LogOut } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 
 const navItems = [
@@ -8,6 +8,8 @@ const navItems = [
   { to: '/galaxy', icon: Orbit, label: 'Galaxy' },
   { to: '/training', icon: Cpu, label: 'Training' },
   { to: '/evaluations', icon: FlaskConical, label: 'Evaluations' },
+  { to: '/training/convert', icon: ArrowRightLeft, label: 'Convert' },
+  { to: '/training/push', icon: Upload, label: 'Push Model' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

@@ -1,12 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, StopCircle } from 'lucide-react'
-import { getDatasets, startTraining, cancelTraining, Dataset } from '../api/client'
+import { getDatasets, startTraining, cancelTraining, getConfigs, Dataset, ConfigInfo } from '../api/client'
 import { useTrainingSSE } from '../hooks/useTrainingSSE'
 
 export default function StartTraining() {
   const navigate = useNavigate()
   const logViewerRef = useRef<HTMLDivElement>(null)
+
+  // Config mode
+  const [configMode, setConfigMode] = useState<'manual' | 'preset'>('manual')
+  const [modelConfigs, setModelConfigs] = useState<ConfigInfo[]>([])
+  const [datasetConfigs, setDatasetConfigs] = useState<ConfigInfo[]>([])
+  const [trainingConfigs, setTrainingConfigs] = useState<ConfigInfo[]>([])
+  const [selectedModelConfig, setSelectedModelConfig] = useState('')
+  const [selectedDatasetConfig, setSelectedDatasetConfig] = useState('')
+  const [selectedTrainingConfig, setSelectedTrainingConfig] = useState('')
 
   // Dataset selection
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -29,6 +38,7 @@ export default function StartTraining() {
   const [batchSize, setBatchSize] = useState(4)
   const [gradAccumSteps, setGradAccumSteps] = useState(4)
   const [maxSteps, setMaxSteps] = useState(-1)
+  const [resumeCheckpoint, setResumeCheckpoint] = useState('')
 
   // State
   const [submitting, setSubmitting] = useState(false)
@@ -42,6 +52,14 @@ export default function StartTraining() {
       setDatasets(res.datasets.filter((d) => d.status === 'completed'))
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (configMode === 'preset') {
+      getConfigs('models').then((r) => setModelConfigs(r.configs)).catch(() => {})
+      getConfigs('datasets').then((r) => setDatasetConfigs(r.configs)).catch(() => {})
+      getConfigs('training').then((r) => setTrainingConfigs(r.configs)).catch(() => {})
+    }
+  }, [configMode])
 
   useEffect(() => {
     if (logViewerRef.current) {
@@ -59,19 +77,31 @@ export default function StartTraining() {
     setError('')
     setSubmitting(true)
     try {
-      const run = await startTraining({
-        dataset_id: datasetSource === 'dataset' ? datasetId : undefined,
-        dataset_path: datasetSource === 'path' ? datasetPath.trim() || undefined : undefined,
-        base_model: baseModel,
-        model_size: modelSize,
-        lora_rank: loraRank,
-        lora_alpha: loraAlpha,
-        learning_rate: learningRate,
-        num_epochs: numEpochs,
-        batch_size: batchSize,
-        gradient_accumulation_steps: gradAccumSteps,
-        max_steps: maxSteps,
-      })
+      const payload: Parameters<typeof startTraining>[0] = configMode === 'preset'
+        ? {
+            model_config_name: selectedModelConfig || undefined,
+            dataset_config_name: selectedDatasetConfig || undefined,
+            training_config_name: selectedTrainingConfig || undefined,
+            // Still allow dataset source in preset mode when no dataset config is chosen
+            dataset_id: !selectedDatasetConfig && datasetSource === 'dataset' ? datasetId : undefined,
+            dataset_path: !selectedDatasetConfig && datasetSource === 'path' ? datasetPath.trim() || undefined : undefined,
+            resume_from_checkpoint: resumeCheckpoint.trim() || undefined,
+          }
+        : {
+            dataset_id: datasetSource === 'dataset' ? datasetId : undefined,
+            dataset_path: datasetSource === 'path' ? datasetPath.trim() || undefined : undefined,
+            base_model: baseModel,
+            model_size: modelSize,
+            lora_rank: loraRank,
+            lora_alpha: loraAlpha,
+            learning_rate: learningRate,
+            num_epochs: numEpochs,
+            batch_size: batchSize,
+            gradient_accumulation_steps: gradAccumSteps,
+            max_steps: maxSteps,
+            resume_from_checkpoint: resumeCheckpoint.trim() || undefined,
+          }
+      const run = await startTraining(payload)
       setRunId(run.id)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start training')
@@ -80,8 +110,12 @@ export default function StartTraining() {
   }
 
   const canSubmit = !submitting && (
-    (datasetSource === 'dataset' && datasetId != null) ||
-    (datasetSource === 'path' && datasetPath.trim())
+    configMode === 'preset'
+      ? (selectedModelConfig || selectedDatasetConfig || selectedTrainingConfig)
+      : (
+          (datasetSource === 'dataset' && datasetId != null) ||
+          (datasetSource === 'path' && datasetPath.trim())
+        )
   )
 
   return (
@@ -91,8 +125,95 @@ export default function StartTraining() {
         <p>Configure and launch a fine-tuning run</p>
       </div>
 
+      {/* Config mode toggle */}
+      <div className="card" style={{ marginBottom: '16px' }}>
+        <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
+          Configuration Mode
+        </label>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <button
+            onClick={() => setConfigMode('manual')}
+            disabled={submitting}
+            style={{
+              background: configMode === 'manual' ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+              border: '1px solid ' + (configMode === 'manual' ? 'var(--accent-blue)' : 'var(--border-primary)'),
+              color: configMode === 'manual' ? '#fff' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: '13px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            Manual Config
+          </button>
+          <button
+            onClick={() => setConfigMode('preset')}
+            disabled={submitting}
+            style={{
+              background: configMode === 'preset' ? 'var(--accent-blue)' : 'var(--bg-tertiary)',
+              border: '1px solid ' + (configMode === 'preset' ? 'var(--accent-blue)' : 'var(--border-primary)'),
+              color: configMode === 'preset' ? '#fff' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: '13px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            Use Presets
+          </button>
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom: '20px' }}>
-        {/* Dataset source */}
+        {/* Preset config dropdowns */}
+        {configMode === 'preset' && (
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div>
+                <label>Model Config</label>
+                <select
+                  value={selectedModelConfig}
+                  onChange={(e) => setSelectedModelConfig(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="">Select model...</option>
+                  {modelConfigs.map((c) => (
+                    <option key={c.name} value={c.name}>{c.display_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Dataset Config</label>
+                <select
+                  value={selectedDatasetConfig}
+                  onChange={(e) => setSelectedDatasetConfig(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="">Select dataset...</option>
+                  {datasetConfigs.map((c) => (
+                    <option key={c.name} value={c.name}>{c.display_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Training Config</label>
+                <select
+                  value={selectedTrainingConfig}
+                  onChange={(e) => setSelectedTrainingConfig(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="">Select training...</option>
+                  {trainingConfigs.map((c) => (
+                    <option key={c.name} value={c.name}>{c.display_name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dataset source — shown in manual mode, or preset mode when no dataset config */}
+        {(configMode === 'manual' || !selectedDatasetConfig) && (
         <div style={{ marginBottom: '20px' }}>
           <label style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>
             Dataset Source
@@ -154,7 +275,10 @@ export default function StartTraining() {
             />
           )}
         </div>
+        )}
 
+        {/* Model config — manual mode only */}
+        {configMode === 'manual' && (<>
         {/* Model config */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
           <div>
@@ -275,9 +399,36 @@ export default function StartTraining() {
                   style={{ width: '120px' }}
                 />
               </div>
+              <div style={{ marginTop: '12px' }}>
+                <label>Resume from Checkpoint</label>
+                <input
+                  type="text"
+                  placeholder="/path/to/checkpoint-XXX"
+                  value={resumeCheckpoint}
+                  onChange={(e) => setResumeCheckpoint(e.target.value)}
+                  disabled={submitting}
+                  style={{ fontSize: '13px' }}
+                />
+              </div>
             </div>
           )}
         </div>
+        </>)}
+
+        {/* Resume from checkpoint — shown in preset mode too */}
+        {configMode === 'preset' && (
+          <div style={{ marginBottom: '20px' }}>
+            <label>Resume from Checkpoint</label>
+            <input
+              type="text"
+              placeholder="/path/to/checkpoint-XXX"
+              value={resumeCheckpoint}
+              onChange={(e) => setResumeCheckpoint(e.target.value)}
+              disabled={submitting}
+              style={{ fontSize: '13px' }}
+            />
+          </div>
+        )}
 
         {/* Error */}
         {error && (

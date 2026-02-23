@@ -380,6 +380,10 @@ export interface StartTrainingRequest {
   batch_size?: number
   gradient_accumulation_steps?: number
   max_steps?: number
+  dataset_config_name?: string | null
+  model_config_name?: string | null
+  training_config_name?: string | null
+  resume_from_checkpoint?: string | null
 }
 
 export const startTraining = (data: StartTrainingRequest) =>
@@ -438,6 +442,7 @@ export interface StartEvaluationRequest {
 export interface EvaluationDetail extends EvaluationRun {
   per_sample_results: unknown[]
   articles_log: unknown[]
+  correction_results: Record<string, unknown> | null
 }
 
 export const startEvaluation = (data: StartEvaluationRequest) =>
@@ -448,6 +453,76 @@ export const getEvaluations = (page = 1) =>
 
 export const getEvaluationDetail = (id: number) =>
   request<EvaluationDetail>(`/training/evaluations/${id}`)
+
+// Training Configs
+export interface ConfigInfo {
+  name: string
+  display_name: string
+  path: string
+}
+
+export interface ConfigListResponse {
+  configs: ConfigInfo[]
+}
+
+export const getConfigs = (configType: string) =>
+  request<ConfigListResponse>(`/training/configs/${configType}`)
+
+// Training Knobs
+export const updateKnobs = (runId: number, data: { learning_rate?: number }) =>
+  request<{ run_id: number; knobs: Record<string, number> }>(`/training/${runId}/knobs`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
+// Correction Agent
+export const startCorrection = (evalId: number, data: { score_threshold?: number; model?: string }) =>
+  request<{ eval_id: number; status: string }>(`/training/evaluate/${evalId}/correct`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
+// Merge/Convert
+export interface MergeConvertRequest {
+  adapter_path: string
+  base_model?: string
+  quant_method?: string
+  output_name?: string
+  keep_merged?: boolean
+}
+
+export interface MergeConvertResponse {
+  gguf_path: string
+  status: string
+}
+
+export const mergeConvert = (data: MergeConvertRequest) =>
+  request<MergeConvertResponse>('/training/convert', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
+// Push Model to HuggingFace
+export interface PushModelRequest {
+  repo_id: string
+  gguf_path?: string
+  merged_model_dir?: string
+  private?: boolean
+  base_model?: string
+  description?: string
+  dataset?: string
+  author?: string
+}
+
+export interface PushModelResponse {
+  repo_url: string
+}
+
+export const pushModel = (data: PushModelRequest) =>
+  request<PushModelResponse>('/training/push', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 
 // Health
 export const getHealth = () => request<{ status: string }>('/health')

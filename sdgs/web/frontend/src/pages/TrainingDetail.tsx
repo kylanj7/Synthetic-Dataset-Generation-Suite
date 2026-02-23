@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { StopCircle, FlaskConical } from 'lucide-react'
+import { StopCircle, FlaskConical, SlidersHorizontal, ChevronDown, ChevronRight } from 'lucide-react'
 import { useTrainingStore } from '../store/trainingStore'
 import { useTrainingSSE } from '../hooks/useTrainingSSE'
-import { cancelTraining, getTrainingRun } from '../api/client'
+import { cancelTraining, getTrainingRun, updateKnobs } from '../api/client'
 
 const statusClass: Record<string, string> = {
   pending: 'badge-pending',
@@ -19,6 +19,89 @@ function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   return `${h}h ${m}m`
+}
+
+function KnobsPanel({ runId }: { runId: number }) {
+  const [open, setOpen] = useState(false)
+  const [lr, setLr] = useState('')
+  const [applying, setApplying] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  const handleApply = async () => {
+    if (!lr.trim()) return
+    setApplying(true)
+    setResult(null)
+    try {
+      const res = await updateKnobs(runId, { learning_rate: parseFloat(lr) })
+      setResult(`Applied. Current knobs: ${JSON.stringify(res.knobs)}`)
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : 'Failed to update knobs')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: '16px' }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: 'var(--text-secondary)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '14px',
+          fontWeight: 500,
+          padding: 0,
+        }}
+      >
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <SlidersHorizontal size={16} />
+        Adjust Training Knobs
+      </button>
+
+      {open && (
+        <div style={{ marginTop: '12px', display: 'flex', alignItems: 'flex-end', gap: '12px' }}>
+          <div style={{ flex: 1 }}>
+            <label>Learning Rate</label>
+            <input
+              type="number"
+              value={lr}
+              onChange={(e) => setLr(e.target.value)}
+              placeholder="e.g. 0.00001"
+              step={0.000001}
+              disabled={applying}
+              style={{ fontSize: '13px' }}
+            />
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={handleApply}
+            disabled={applying || !lr.trim()}
+            style={{ padding: '8px 16px', fontSize: '13px', flexShrink: 0 }}
+          >
+            {applying ? <span className="spinner" /> : 'Apply'}
+          </button>
+        </div>
+      )}
+
+      {open && result && (
+        <div style={{
+          marginTop: '8px',
+          fontSize: '12px',
+          color: 'var(--text-secondary)',
+          background: 'var(--bg-tertiary)',
+          padding: '6px 10px',
+          borderRadius: 'var(--radius-sm)',
+        }}>
+          {result}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function TrainingDetail() {
@@ -149,6 +232,9 @@ export default function TrainingDetail() {
           </pre>
         </div>
       )}
+
+      {/* Live knobs */}
+      {currentRun.status === 'running' && <KnobsPanel runId={runId} />}
 
       {/* Live SSE log */}
       {isRunning && (

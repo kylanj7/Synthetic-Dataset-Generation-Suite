@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Wand2 } from 'lucide-react'
 import { useTrainingStore } from '../store/trainingStore'
+import { startCorrection } from '../api/client'
 
 const statusClass: Record<string, string> = {
   pending: 'badge-pending',
@@ -30,9 +31,52 @@ export default function EvaluationDetail() {
   const [expandedSample, setExpandedSample] = useState<number | null>(null)
   const [showArticles, setShowArticles] = useState(false)
 
+  // Correction agent state
+  const [showCorrection, setShowCorrection] = useState(false)
+  const [correctionThreshold, setCorrectionThreshold] = useState(50)
+  const [correctionModel, setCorrectionModel] = useState('claude-opus-4-20250916')
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false)
+  const [correctionStarted, setCorrectionStarted] = useState(false)
+  const [correctionError, setCorrectionError] = useState('')
+  const [showCorrectionResults, setShowCorrectionResults] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     fetchEvaluation(evalId)
   }, [evalId])
+
+  // Poll for correction results
+  useEffect(() => {
+    if (correctionStarted && !currentEval?.correction_results) {
+      pollRef.current = setInterval(() => {
+        fetchEvaluation(evalId)
+      }, 10000)
+    }
+    if (currentEval?.correction_results && pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+      setCorrectionStarted(false)
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [correctionStarted, currentEval?.correction_results, evalId])
+
+  const handleStartCorrection = async () => {
+    setCorrectionError('')
+    setCorrectionSubmitting(true)
+    try {
+      await startCorrection(evalId, {
+        score_threshold: correctionThreshold,
+        model: correctionModel,
+      })
+      setCorrectionStarted(true)
+    } catch (e) {
+      setCorrectionError(e instanceof Error ? e.message : 'Failed to start correction')
+    } finally {
+      setCorrectionSubmitting(false)
+    }
+  }
 
   if (loading && !currentEval) {
     return <div style={{ textAlign: 'center', padding: '40px' }}><div className="spinner" /></div>
@@ -252,6 +296,151 @@ export default function EvaluationDetail() {
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* Correction agent */}
+      {currentEval.status === 'completed' && !currentEval.correction_results && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <button
+            onClick={() => setShowCorrection(!showCorrection)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '14px',
+              fontWeight: 500,
+              padding: 0,
+            }}
+          >
+            {showCorrection ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            <Wand2 size={16} />
+            Run Correction Agent
+            {correctionStarted && (
+              <span className="badge badge-running" style={{ marginLeft: '8px' }}>correction running</span>
+            )}
+          </button>
+
+          {showCorrection && !correctionStarted && (
+            <div style={{ marginTop: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                <div>
+                  <label>Score Threshold</label>
+                  <input
+                    type="number"
+                    value={correctionThreshold}
+                    onChange={(e) => setCorrectionThreshold(parseFloat(e.target.value) || 50)}
+                    disabled={correctionSubmitting}
+                    step={5}
+                  />
+                </div>
+                <div>
+                  <label>Model</label>
+                  <select
+                    value={correctionModel}
+                    onChange={(e) => setCorrectionModel(e.target.value)}
+                    disabled={correctionSubmitting}
+                  >
+                    <option value="claude-opus-4-20250916">Claude Opus 4</option>
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                  </select>
+                </div>
+              </div>
+
+              {correctionError && (
+                <div style={{
+                  background: 'rgba(255, 126, 179, 0.1)',
+                  border: '1px solid rgba(255, 126, 179, 0.3)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 12px',
+                  color: 'var(--accent-pink)',
+                  fontSize: '13px',
+                  marginBottom: '12px',
+                }}>
+                  {correctionError}
+                </div>
+              )}
+
+              <button
+                className="btn btn-primary"
+                onClick={handleStartCorrection}
+                disabled={correctionSubmitting}
+                style={{ fontSize: '13px' }}
+              >
+                {correctionSubmitting ? <span className="spinner" /> : 'Start Correction'}
+              </button>
+            </div>
+          )}
+
+          {showCorrection && correctionStarted && (
+            <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Correction is running. Polling for results every 10 seconds...
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Correction results */}
+      {currentEval.correction_results && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <button
+            onClick={() => setShowCorrectionResults(!showCorrectionResults)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '14px',
+              fontWeight: 500,
+              padding: 0,
+            }}
+          >
+            {showCorrectionResults ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            <Wand2 size={16} />
+            Correction Results
+          </button>
+
+          {showCorrectionResults && (
+            <div style={{ marginTop: '12px' }}>
+              {/* Summary stats */}
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
+                {currentEval.correction_results.total_corrected != null && (
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Corrected: <strong style={{ color: 'var(--accent-cyan)' }}>
+                      {String(currentEval.correction_results.total_corrected)}
+                    </strong>
+                  </div>
+                )}
+                {currentEval.correction_results.total_appended != null && (
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Appended: <strong style={{ color: 'var(--accent-green)' }}>
+                      {String(currentEval.correction_results.total_appended)}
+                    </strong>
+                  </div>
+                )}
+              </div>
+              <pre style={{
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-tertiary)',
+                padding: '12px',
+                borderRadius: 'var(--radius-sm)',
+                whiteSpace: 'pre-wrap',
+                maxHeight: '400px',
+                overflow: 'auto',
+                margin: 0,
+              }}>
+                {JSON.stringify(currentEval.correction_results, null, 2)}
+              </pre>
+            </div>
+          )}
         </div>
       )}
 

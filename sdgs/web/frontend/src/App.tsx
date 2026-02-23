@@ -13,6 +13,8 @@ import StartTraining from './pages/StartTraining'
 import TrainingDetail from './pages/TrainingDetail'
 import Evaluations from './pages/Evaluations'
 import EvaluationDetail from './pages/EvaluationDetail'
+import MergeConvert from './pages/MergeConvert'
+import PushModel from './pages/PushModel'
 import Settings from './pages/Settings'
 
 export default function App() {
@@ -33,6 +35,8 @@ export default function App() {
             <Route path="/galaxy" element={<Galaxy />} />
             <Route path="/training" element={<Training />} />
             <Route path="/training/start" element={<StartTraining />} />
+            <Route path="/training/convert" element={<MergeConvert />} />
+            <Route path="/training/push" element={<PushModel />} />
             <Route path="/training/:id" element={<TrainingDetail />} />
             <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/evaluations/:id" element={<EvaluationDetail />} />
